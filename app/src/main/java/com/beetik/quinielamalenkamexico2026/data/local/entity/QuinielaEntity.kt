@@ -11,5 +11,6 @@ data class QuinielaEntity(
     val userEmail: String = "",
     val resultsJson: String, // Serialized Map<String, MatchResult>
     val winnersJson: String = "{}", // Serialized Map<String, String> (Group -> TeamName)
-    val isSent: Boolean = false
+    val isSent: Boolean = false,
+    val isFavorite: Boolean = false
 )

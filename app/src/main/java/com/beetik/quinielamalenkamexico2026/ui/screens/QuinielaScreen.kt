@@ -54,14 +54,24 @@ import com.google.firebase.firestore.FirebaseFirestore
 import java.net.HttpURLConnection
 import java.net.URL
 
+import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun QuinielaScreen(modifier: Modifier = Modifier) {
+fun QuinielaScreen(
+    modifier: Modifier = Modifier,
+    quinielaId: Int = -1,
+    onBack: () -> Unit = {}
+) {
     val allMatches = MatchRepository.allMatches
     val groups = remember { allMatches.groupBy { it.group } }
     val groupNames = remember { groups.keys.toList() }
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val editState = LocalQuinielaEditState.current
+
     val firestore = remember {
         FirebaseFirestore.getInstance()
     }
@@ -86,12 +96,70 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
     var showSendConfirmDialog by remember { mutableStateOf(false) }
     var savedQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
     var quinielaToDelete by remember { mutableStateOf<QuinielaEntity?>(null) }
-    var existingQuiniela by remember { mutableStateOf<QuinielaEntity?>(null) }
 
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val gson = remember { Gson() }
 
-    fun saveQuinielaToRoom(forceOverwrite: Boolean = false) {
+    var originalData by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var isDataLoaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(quinielaId) {
+        if (quinielaId != -1) {
+            withContext(Dispatchers.IO) {
+                val entity = database.quinielaDao().getQuinielaById(quinielaId)
+                if (entity != null) {
+                    originalData = entity
+                    withContext(Dispatchers.Main) {
+                        quinielaName = entity.quinielaName
+                        propietarioName = entity.propietarioName
+                        userEmail = entity.userEmail
+
+                        val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
+                        val winnersType = object : TypeToken<Map<String, String>>() {}.type
+
+                        matchResults = gson.fromJson(entity.resultsJson, resultsType)
+                        groupWinners = try {
+                            gson.fromJson(entity.winnersJson, winnersType)
+                        } catch (_: Exception) {
+                            emptyMap()
+                        }
+                        isSentByServer = entity.isSent
+                        isDataLoaded = true
+                    }
+                }
+            }
+        } else {
+            isDataLoaded = true
+        }
+    }
+
+    val hasChanges = remember(isDataLoaded, quinielaName, propietarioName, userEmail, matchResults, groupWinners, originalData) {
+        if (!isDataLoaded) return@remember false
+        
+        if (quinielaId == -1) {
+             quinielaName.isNotBlank() || propietarioName.isNotBlank() || userEmail.isNotBlank() || 
+             matchResults.values.any { it.homeScore.isNotEmpty() || it.awayScore.isNotEmpty() } || 
+             groupWinners.isNotEmpty()
+        } else {
+            val currentResultsJson = gson.toJson(matchResults)
+            val currentWinnersJson = gson.toJson(groupWinners)
+            
+            quinielaName != originalData?.quinielaName ||
+            propietarioName != originalData?.propietarioName ||
+            userEmail != originalData?.userEmail ||
+            currentResultsJson != originalData?.resultsJson ||
+            currentWinnersJson != originalData?.winnersJson
+        }
+    }
+
+    DisposableEffect(hasChanges) {
+        editState.hasUnsavedChanges = hasChanges
+        onDispose {
+            editState.hasUnsavedChanges = false
+        }
+    }
+
+    fun saveQuinielaToRoom(forceOverwrite: Boolean = false, onComplete: (() -> Unit)? = null) {
         val hasAnyScore = matchResults.values.any { it.homeScore.isNotEmpty() || it.awayScore.isNotEmpty() }
         val hasAnyWinner = groupWinners.isNotEmpty()
         val hasName = quinielaName.isNotBlank()
@@ -99,16 +167,16 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
         val hasEmail = userEmail.isNotBlank()
 
         if (!hasAnyScore && !hasAnyWinner && !hasName && !hasPropietario && !hasEmail) {
-            Toast.makeText(context, "No hay datos para guardar.", Toast.LENGTH_SHORT).show()
+            if (!forceOverwrite) Toast.makeText(context, "No hay datos para guardar.", Toast.LENGTH_SHORT).show()
+            onComplete?.invoke()
             return
         }
 
         coroutineScope.launch {
             val existing = database.quinielaDao().getQuinielaByNameAndOwner(quinielaName, propietarioName)
             
-            if (!forceOverwrite && existing != null) {
+            if (!forceOverwrite && existing != null && existing.id != quinielaId) {
                 withContext(Dispatchers.Main) {
-                    existingQuiniela = existing
                     showOverwriteDialog = true
                 }
                 return@launch
@@ -117,7 +185,7 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
             val resultsJson = gson.toJson(matchResults)
             val winnersJson = gson.toJson(groupWinners)
             val entity = QuinielaEntity(
-                id = existing?.id ?: 0,
+                id = if (quinielaId != -1) quinielaId else (existing?.id ?: 0),
                 quinielaName = quinielaName,
                 propietarioName = propietarioName,
                 userEmail = userEmail,
@@ -131,9 +199,24 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
                     Toast.makeText(context, "¡Quiniela guardada!", Toast.LENGTH_SHORT).show()
                 }
                 showOverwriteDialog = false
-                existingQuiniela = null
+                onComplete?.invoke()
             }
         }
+    }
+
+    LaunchedEffect(Unit) {
+        editState.onSaveAndExit = { onConfirm ->
+            saveQuinielaToRoom(forceOverwrite = true) {
+                onConfirm()
+            }
+        }
+        editState.onDiscardAndExit = { onConfirm ->
+            onConfirm()
+        }
+    }
+
+    androidx.activity.compose.BackHandler(enabled = hasChanges) {
+        onBack()
     }
 
     fun sendQuinielaToFirebase() {
@@ -198,7 +281,7 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
                                 Toast.makeText(context, "¡Quiniela registrada! (Error en Webhook)", Toast.LENGTH_LONG).show()
                             }
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         withContext(Dispatchers.Main) {
                             Toast.makeText(context, "¡Quiniela registrada!", Toast.LENGTH_LONG).show()
                         }
@@ -258,7 +341,7 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
                                 val emailComplete = entity.userEmail.isNotBlank() && android.util.Patterns.EMAIL_ADDRESS.matcher(entity.userEmail).matches()
                                 
                                 matchesComplete && winnersComplete && emailComplete
-                            } catch (e: Exception) {
+                            } catch (_: Exception) {
                                 false
                             }
                         }
@@ -290,7 +373,7 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
                                         matchResults = gson.fromJson(entity.resultsJson, resultsType)
                                         groupWinners = try {
                                             gson.fromJson(entity.winnersJson, winnersType)
-                                        } catch (e: Exception) {
+                                        } catch (_: Exception) {
                                             emptyMap()
                                         }
                                         isSentByServer = entity.isSent
@@ -420,7 +503,6 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
         AlertDialog(
             onDismissRequest = { 
                 showOverwriteDialog = false
-                existingQuiniela = null
             },
             title = { Text("Quiniela existente") },
             text = { Text("Ya existe una quiniela con el mismo nombre y propietario. ¿Deseas sobreescribirla?") },
@@ -437,7 +519,6 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
                 TextButton(
                     onClick = { 
                         showOverwriteDialog = false
-                        existingQuiniela = null
                     }
                 ) {
                     Text("Cancelar")
@@ -498,18 +579,19 @@ fun QuinielaScreen(modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
             topBar = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, end = 12.dp),
-                    contentAlignment = Alignment.TopEnd
-                ) {
-                    Text(
-                        text = "v1.0",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Black.copy(alpha = 0.4f)
+                TopAppBar(
+                    title = { Text("Llenar Quiniela", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Regresar")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = Gold,
+                        navigationIconContentColor = Gold
                     )
-                }
+                )
             },
             bottomBar = {
                 Surface(

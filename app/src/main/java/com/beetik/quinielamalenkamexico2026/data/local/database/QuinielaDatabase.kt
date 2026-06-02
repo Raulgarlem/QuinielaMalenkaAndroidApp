@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import com.beetik.quinielamalenkamexico2026.data.local.dao.QuinielaDao
 import com.beetik.quinielamalenkamexico2026.data.local.entity.QuinielaEntity
 
-@Database(entities = [QuinielaEntity::class], version = 4, exportSchema = false)
+@Database(entities = [QuinielaEntity::class], version = 5, exportSchema = false)
 abstract class QuinielaDatabase : RoomDatabase() {
     abstract fun quinielaDao(): QuinielaDao
 

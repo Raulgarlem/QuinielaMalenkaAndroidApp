@@ -4,6 +4,7 @@ data class Match(
     val id: String,
     val group: String,
     val date: String,
+    val time: String,
     val homeTeam: String,
     val homeFlag: String,
     val awayTeam: String,
