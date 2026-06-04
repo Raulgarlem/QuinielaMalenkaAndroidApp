@@ -5,11 +5,14 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.beetik.quinielamalenkamexico2026.data.local.dao.QuinielaDao
+import com.beetik.quinielamalenkamexico2026.data.local.dao.RankingConfigDao
 import com.beetik.quinielamalenkamexico2026.data.local.entity.QuinielaEntity
+import com.beetik.quinielamalenkamexico2026.data.local.entity.RankingConfigEntity
 
-@Database(entities = [QuinielaEntity::class], version = 5, exportSchema = false)
+@Database(entities = [QuinielaEntity::class, RankingConfigEntity::class], version = 6, exportSchema = false)
 abstract class QuinielaDatabase : RoomDatabase() {
     abstract fun quinielaDao(): QuinielaDao
+    abstract fun rankingConfigDao(): RankingConfigDao
 
     companion object {
         @Volatile

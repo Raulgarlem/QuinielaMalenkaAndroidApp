@@ -1,11 +1,16 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens
 
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -29,6 +34,9 @@ val LocalQuinielaEditState = staticCompositionLocalOf { QuinielaEditState() }
 
 @Composable
 fun MainScreen() {
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -88,7 +96,8 @@ fun MainScreen() {
             bottomBar = {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    modifier = if (isLandscape) Modifier.height(48.dp) else Modifier.fillMaxWidth()
                 ) {
                     items.forEach { screen ->
                         val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
@@ -96,23 +105,26 @@ fun MainScreen() {
                             icon = {
                                 Icon(
                                     if (selected) screen.selectedIcon else screen.unselectedIcon,
-                                    contentDescription = screen.title
+                                    contentDescription = screen.title,
+                                    modifier = if (isLandscape) Modifier.size(20.dp) else Modifier.size(24.dp)
                                 )
                             },
-                            label = { 
-                                Text(
-                                    text = screen.title,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 2,
-                                    minLines = 2,
-                                    lineHeight = 12.sp,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.width(72.dp)
-                                ) 
+                            label = if (isLandscape) null else { 
+                                {
+                                    Text(
+                                        text = screen.title,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 2,
+                                        minLines = 2,
+                                        lineHeight = 12.sp,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.width(72.dp)
+                                    ) 
+                                }
                             },
                             selected = selected,
-                            alwaysShowLabel = true,
+                            alwaysShowLabel = !isLandscape,
                             onClick = {
                                 val currentRoute = navController.currentBackStackEntry?.destination?.route
                                 val navigateAction: () -> Unit = {
