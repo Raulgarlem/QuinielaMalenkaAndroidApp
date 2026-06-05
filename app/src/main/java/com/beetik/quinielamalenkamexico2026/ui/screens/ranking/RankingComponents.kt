@@ -23,6 +23,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -30,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.geometry.Offset
 import com.beetik.quinielamalenkamexico2026.data.MatchRepository
 import com.beetik.quinielamalenkamexico2026.model.Match
@@ -167,15 +170,24 @@ fun ParticipantColumnHeader(
     isReorderable: Boolean = false,
     onSetDraggingId: (String?) -> Unit = {},
     onSetDragOffset: (Float) -> Unit = {},
-    onSetOffsetY: (Float) -> Unit = {}
+    onSetOffsetY: (Float) -> Unit = {},
+    scrollState: androidx.compose.foundation.ScrollState? = null,
+    leftBoundPx: Float = 0f
 ) {
     val currentDragOffset by rememberUpdatedState(dragOffset)
     val currentOffsetY by rememberUpdatedState(offsetY)
     val scope = rememberCoroutineScope()
     
+    var headerPositionX by remember { mutableFloatStateOf(0f) }
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenWidthPx = with(density) { config.screenWidthDp.dp.toPx() }
+    var autoScrollJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var lastFingerX by remember { mutableFloatStateOf(0f) }
+
     Column(
         modifier = Modifier
             .width(80.dp)
+            .onGloballyPositioned { headerPositionX = it.positionInWindow().x }
             .offset { IntOffset(0, currentOffsetY.roundToInt()) }
             .zIndex(if (draggingId == p.id || currentOffsetY != 0f) 10f else 1f)
             .graphicsLayer {
@@ -188,7 +200,7 @@ fun ParticipantColumnHeader(
                 }
             }
             .pointerInput(p.id, isPinned, isComparison) {
-                if (isPinned) {
+                if (isPinned && !isComparison) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = { 
                             onSetDraggingId(p.id)
@@ -212,9 +224,59 @@ fun ParticipantColumnHeader(
                                     onSetDragOffset(newDragOffset + step)
                                 }
                             }
+
+                            // Auto-scroll logic for Table
+                            if (scrollState != null) {
+                                lastFingerX = headerPositionX + change.position.x
+                                val edgeThreshold = 60f 
+                                if (lastFingerX > (screenWidthPx - edgeThreshold) && currentIdx < pinnedParticipantIds.size - 1) {
+                                    if (autoScrollJob == null || !autoScrollJob!!.isActive) {
+                                        autoScrollJob = scope.launch {
+                                            while (true) {
+                                                val cIdx = pinnedParticipantIds.indexOf(p.id)
+                                                if (lastFingerX > (screenWidthPx - edgeThreshold) && cIdx < pinnedParticipantIds.size - 1) {
+                                                    scrollState.scrollBy(15f)
+                                                    // Note: dragOffset (translationX) is automatically handled by pointer system 
+                                                    // but we might need to adjust it if the header anchor moves.
+                                                    // In ColumnHeader, we use translationX.
+                                                    onSetDragOffset(currentDragOffset + 15f)
+                                                    delay(16)
+                                                } else {
+                                                    break
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if (lastFingerX < (leftBoundPx + edgeThreshold) && currentIdx > 0) {
+                                    if (autoScrollJob == null || !autoScrollJob!!.isActive) {
+                                        autoScrollJob = scope.launch {
+                                            while (true) {
+                                                val cIdx = pinnedParticipantIds.indexOf(p.id)
+                                                if (lastFingerX < (leftBoundPx + edgeThreshold) && cIdx > 0) {
+                                                    scrollState.scrollBy(-15f)
+                                                    onSetDragOffset(currentDragOffset - 15f)
+                                                    delay(16)
+                                                } else {
+                                                    break
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    autoScrollJob?.cancel()
+                                }
+                            }
                         },
-                        onDragEnd = { onSetDraggingId(null); onSetDragOffset(0f) },
-                        onDragCancel = { onSetDraggingId(null); onSetDragOffset(0f) }
+                        onDragEnd = { 
+                            onSetDraggingId(null)
+                            onSetDragOffset(0f)
+                            autoScrollJob?.cancel()
+                        },
+                        onDragCancel = { 
+                            onSetDraggingId(null)
+                            onSetDragOffset(0f)
+                            autoScrollJob?.cancel()
+                        }
                     )
                 }
             }

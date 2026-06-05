@@ -152,9 +152,12 @@ fun TableView(
                             val categoryId = pinnedParticipantCategories[p.id]
                             val isPinned = categoryId != null
                             val categoryColor = if (isPinned) pinnedCategories[categoryId]?.color ?: Gold else Gold
-                            val isReorderable = false
+                            val isReorderable = isPinned
                             var offsetY by remember { mutableFloatStateOf(0f) }
                             
+                            val fixedPartWidth = 150.dp + (if (compP != null) 80.dp else 0.dp)
+                            val leftBoundPx = with(density) { fixedPartWidth.toPx() }
+
                             ParticipantColumnHeader(
                                 p = p,
                                 isPinned = isPinned,
@@ -171,7 +174,9 @@ fun TableView(
                                 onSetDragOffset = { dragOffset = it },
                                 onSetOffsetY = { offsetY = it },
                                 onToggleComparison = onToggleComparison,
-                                onRemoveParticipant = onRemoveParticipant
+                                onRemoveParticipant = onRemoveParticipant,
+                                scrollState = scrollState,
+                                leftBoundPx = leftBoundPx
                             )
                         }
                     }

@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -40,6 +41,10 @@ import com.beetik.quinielamalenkamexico2026.model.RankingConfig
 import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.*
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 import java.util.UUID
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.Date
+import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,9 +52,9 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     
-    // UI state that doesn't need persistence
-    var selectedView by remember { mutableStateOf("Tabla") }
-    var selectedFilter by remember { mutableStateOf("Todas") }
+    // UI state that needs persistence across rotation
+    var selectedView by rememberSaveable { mutableStateOf("Tabla") }
+    var selectedFilter by rememberSaveable { mutableStateOf("Todas") }
     
     // ViewModel driven state
     val savedConfigs = viewModel.savedConfigs
@@ -94,7 +99,7 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
         }
     }
 
-    val scoresAndRanks by remember(isLiveRanking, selectedFilter) {
+    val scoresAndRanks by remember(isLiveRanking, selectedFilter, resultsMap.size, confirmedIds.size) {
         derivedStateOf {
             val matchesByGroup = allMatches.groupBy { it.group }
             
@@ -117,20 +122,54 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
                 p.id to pts
             }
 
+            // Calculate base scores (Confirmed only)
+            val baseScores = baseParticipants.associate { p ->
+                var pts = 0
+                allMatches.forEach { match ->
+                    if (match.id in confirmedIds) {
+                        resultsMap[match.id]?.let { actual ->
+                            val pred = p.predictions[match.id] ?: (0 to 0)
+                            pts += calculatePoints(pred, actual)
+                        }
+                    }
+                }
+                matchesByGroup.forEach { (gName, gMatches) ->
+                    val allConfirmed = gMatches.all { it.id in confirmedIds }
+                    if (allConfirmed) {
+                        val confirmedResults = resultsMap.filterKeys { it in confirmedIds }
+                        val winner = getGroupWinner(gName, allMatches, confirmedResults)?.first
+                        if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
+                    }
+                }
+                p.id to pts
+            }
+
             val ranks = mutableMapOf<String, Int>()
+            val baseRanks = mutableMapOf<String, Int>()
             val officialParticipants = baseParticipants.filter { !it.id.startsWith("loaded_") }
             
             if (selectedFilter == "Añadidas") {
                 val addedParticipants = baseParticipants.filter { it.id.startsWith("loaded_") }
+                
+                // Current Ranks
                 val addedScores = addedParticipants.associateWith { scores[it.id] ?: 0 }
                 val sortedAdded = addedScores.toList().sortedByDescending { it.second }
-                
                 var currentRank = 1
                 for (i in sortedAdded.indices) {
                     if (i > 0 && sortedAdded[i].second < sortedAdded[i - 1].second) currentRank++
                     ranks[sortedAdded[i].first.id] = currentRank
                 }
+                
+                // Base Ranks
+                val addedBaseScores = addedParticipants.associateWith { baseScores[it.id] ?: 0 }
+                val sortedBase = addedBaseScores.toList().sortedByDescending { it.second }
+                var cBaseRank = 1
+                for (i in sortedBase.indices) {
+                    if (i > 0 && sortedBase[i].second < sortedBase[i - 1].second) cBaseRank++
+                    baseRanks[sortedBase[i].first.id] = cBaseRank
+                }
             } else {
+                // Official Ranks
                 val officialScores = officialParticipants.associateWith { scores[it.id] ?: 0 }
                 val sortedOfficial = officialScores.toList().sortedByDescending { it.second }
                 var currentRank = 1
@@ -149,6 +188,28 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
                         officialScoreToRank[matchScore] ?: 1
                     } else {
                         officialScoreToRank.size + 1
+                    }
+                }
+                
+                // Base Official Ranks
+                val officialBaseScores = officialParticipants.associateWith { baseScores[it.id] ?: 0 }
+                val sortedBase = officialBaseScores.toList().sortedByDescending { it.second }
+                var cBaseRank = 1
+                for (i in sortedBase.indices) {
+                    if (i > 0 && sortedBase[i].second < sortedBase[i - 1].second) cBaseRank++
+                    baseRanks[sortedBase[i].first.id] = cBaseRank
+                }
+                
+                val officialBaseScoreToRank = officialBaseScores.values.distinct().sortedByDescending { it }
+                    .withIndex().associate { it.value to it.index + 1 }
+                
+                baseParticipants.filter { it.id.startsWith("loaded_") }.forEach { lp ->
+                    val score = baseScores[lp.id] ?: 0
+                    val matchScore = officialBaseScoreToRank.keys.firstOrNull { it <= score }
+                    baseRanks[lp.id] = if (matchScore != null) {
+                        officialBaseScoreToRank[matchScore] ?: 1
+                    } else {
+                        officialBaseScoreToRank.size + 1
                     }
                 }
             }
@@ -193,42 +254,56 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
                     matchHistoryRanks[match.id] = ranksStep
                 }
             }
-            Triple(scores, ranks, matchHistoryRanks)
+            listOf(scores, ranks, baseRanks, matchHistoryRanks)
         }
     }
 
-    val currentScores = scoresAndRanks.first
-    val currentRanks = scoresAndRanks.second
-    val matchHistoryRanks = scoresAndRanks.third
+    val currentScores = scoresAndRanks[0] as Map<String, Int>
+    val currentRanks = scoresAndRanks[1] as Map<String, Int>
+    val baseRanks = scoresAndRanks[2] as Map<String, Int>
+    val matchHistoryRanks = scoresAndRanks[3] as Map<String, Map<String, Int>>
 
     val filteredParticipants by remember(selectedFilter, searchQuery) {
         derivedStateOf {
-            val scores = scoresAndRanks.first
+            val scores = currentScores
             val user = baseParticipants.first { it.isUser }
             val loaded = baseParticipants.filter { it.id.startsWith("loaded_") }
             val others = baseParticipants.filter { !it.isUser && !it.id.startsWith("loaded_") }
             
+            // Re-order based on pins
             val pinnedOthers = others.filter { it.id in pinnedParticipantCategories }
                 .sortedBy { pinnedParticipantIds.indexOf(it.id) }
-            
             val remainingOthers = others.filter { it.id !in pinnedParticipantCategories }
-            val allInTodasOrder = (loaded + listOf(user) + pinnedOthers + remainingOthers).distinctBy { it.id }
+            
+            val pinnedLoaded = loaded.filter { it.id in pinnedParticipantCategories }
+                .sortedBy { pinnedParticipantIds.indexOf(it.id) }
+            val remainingLoaded = loaded.filter { it.id !in pinnedParticipantCategories }
+
+            // Base order: [Loaded] [Mi Quiniela] [Others]
+            // But within groups, pins go first and follow pinnedParticipantIds order
+            val allInTodasOrder = (pinnedLoaded + remainingLoaded + 
+                                   listOf(user) + 
+                                   pinnedOthers + remainingOthers).distinctBy { it.id }
 
             val list = when {
                 selectedFilter == "Añadidas" -> {
-                    loaded.sortedWith(compareByDescending<Participant> { scores[it.id] ?: 0 }.thenBy { it.quinielaName })
+                    loaded.sortedWith(compareByDescending<Participant> { currentScores[it.id] ?: 0 }.thenBy { it.quinielaName })
                 }
                 selectedFilter != "Todas" && selectedFilter != "Top 10" && selectedFilter != "Top 5" -> {
                     val catId = pinnedCategories.values.find { it.name == selectedFilter }?.id
                     if (catId != null) {
-                        val pinnedInCat = others.filter { pinnedParticipantCategories[it.id] == catId }
-                        (loaded + listOf(user) + pinnedInCat).distinctBy { it.id }
+                        val pinnedInCat = (others + loaded + listOf(user))
+                            .filter { pinnedParticipantCategories[it.id] == catId }
+                            .sortedBy { pinnedParticipantIds.indexOf(it.id) }
+                        (loaded.filter { it.id !in pinnedParticipantCategories } + 
+                         listOf(user).filter { it.id !in pinnedParticipantCategories } + 
+                         pinnedInCat).distinctBy { it.id }
                     } else { allInTodasOrder }
                 }
                 selectedFilter == "Top 5" || selectedFilter == "Top 10" -> {
                     val n = if (selectedFilter == "Top 5") 5 else 10
                     val othersPool = baseParticipants.filter { !it.isUser && !it.id.startsWith("loaded_") }
-                    val sortedOthers = othersPool.sortedWith(compareByDescending<Participant> { scores[it.id] ?: 0 }.thenBy { allInTodasOrder.indexOf(it) })
+                    val sortedOthers = othersPool.sortedWith(compareByDescending<Participant> { currentScores[it.id] ?: 0 }.thenBy { allInTodasOrder.indexOf(it) })
                     (loaded + listOf(user) + sortedOthers.take(n)).distinctBy { it.id }
                 }
                 else -> allInTodasOrder
@@ -236,6 +311,104 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
 
             if (searchQuery.isEmpty()) list
             else list.filter { it.quinielaName.contains(searchQuery, ignoreCase = true) || it.ownerName.contains(searchQuery, ignoreCase = true) }
+        }
+    }
+
+    val distinctDates = remember(allMatches) { allMatches.map { it.date }.distinct().sorted() }
+    
+    var selectedCardsDate by remember(distinctDates) {
+        mutableStateOf(
+            run {
+                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val todayStr = sdf.format(Date())
+                distinctDates.minByOrNull { date ->
+                    try {
+                        val d = sdf.parse(date)
+                        val t = sdf.parse(todayStr)
+                        Math.abs(d.time!! - t.time!!)
+                    } catch (e: Exception) { Long.MAX_VALUE }
+                } ?: (if (distinctDates.isNotEmpty()) distinctDates[0] else "")
+            }
+        )
+    }
+
+    var showOnlyDayPoints by remember { mutableStateOf(false) }
+
+    val dayMatches = remember(allMatches, selectedCardsDate) {
+        allMatches.filter { it.date == selectedCardsDate }
+    }
+
+    val datesWithSimulations = remember(resultsMap.size, confirmedIds.size) {
+        allMatches.filter { it.id in resultsMap && it.id !in confirmedIds }
+            .map { it.date }
+            .toSet()
+    }
+
+    val cardsScoresAndRanks by remember(isLiveRanking, selectedCardsDate, baseParticipants.size, resultsMap.size, showOnlyDayPoints) {
+        derivedStateOf {
+            val matchesForCalculation = if (showOnlyDayPoints) {
+                allMatches.filter { it.date == selectedCardsDate }
+            } else {
+                allMatches.filter { it.date <= selectedCardsDate }
+            }
+            
+            val resultsForCalculation = resultsMap.filterKeys { id -> 
+                val match = allMatches.find { it.id == id }
+                if (showOnlyDayPoints) match?.date == selectedCardsDate
+                else match?.date?.let { it <= selectedCardsDate } ?: false
+            }
+            
+            val scores = baseParticipants.associate { p ->
+                var pts = 0
+                matchesForCalculation.forEach { match ->
+                    resultsForCalculation[match.id]?.let { actual ->
+                        val pred = p.predictions[match.id] ?: (0 to 0)
+                        pts += calculatePoints(pred, actual)
+                    }
+                }
+                
+                if (!showOnlyDayPoints) {
+                    allMatches.groupBy { it.group }.forEach { (gName, gMatches) ->
+                        val gMatchesUpToDate = gMatches.filter { it.date <= selectedCardsDate }
+                        if (gMatchesUpToDate.isNotEmpty()) {
+                            val hasResults = gMatchesUpToDate.any { it.id in resultsForCalculation }
+                            val isGroupFullyFinished = gMatches.all { it.id in resultsMap && it.id in confirmedIds } // Group points usually only count if fully confirmed or if live is on
+                            
+                            // Re-evaluating group points logic for cards view
+                            val groupResultsForWinner = resultsMap.filterKeys { id -> allMatches.find { it.id == id }?.let { it.group == gName && it.date <= selectedCardsDate } ?: false }
+                            val hasAnyResultInGroup = groupResultsForWinner.isNotEmpty()
+                            val isFinished = gMatches.all { it.id in resultsMap }
+                            
+                            if (hasAnyResultInGroup && (isFinished || isLiveRanking)) {
+                                val winner = getGroupWinner(gName, allMatches, groupResultsForWinner)?.first
+                                if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
+                            }
+                        }
+                    }
+                }
+                p.id to pts
+            }
+
+            val ranks = mutableMapOf<String, Int>()
+            val officialParticipants = baseParticipants.filter { !it.id.startsWith("loaded_") }
+            val officialScores = officialParticipants.associateWith { scores[it.id] ?: 0 }
+            val sortedOfficial = officialScores.toList().sortedByDescending { it.second }
+            var currentRank = 1
+            for (i in sortedOfficial.indices) {
+                if (i > 0 && sortedOfficial[i].second < sortedOfficial[i - 1].second) currentRank++
+                ranks[sortedOfficial[i].first.id] = currentRank
+            }
+
+            val officialScoreToRank = officialScores.values.distinct().sortedByDescending { it }
+                .withIndex().associate { it.value to it.index + 1 }
+
+            baseParticipants.filter { it.id.startsWith("loaded_") }.forEach { lp ->
+                val score = scores[lp.id] ?: 0
+                val matchScore = officialScoreToRank.keys.firstOrNull { it <= score }
+                ranks[lp.id] = if (matchScore != null) officialScoreToRank[matchScore] ?: 1 else officialScoreToRank.size + 1
+            }
+
+            scores to ranks
         }
     }
 
@@ -420,8 +593,48 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
 
             when(selectedView) {
                 "Tabla" -> TableView(allMatches, filteredParticipants, resultsMap, confirmedIds, currentScores, currentRanks, matchHistoryRanks, pinnedParticipantCategories, pinnedParticipantIds, pinnedCategories, comparisonParticipantId, showAddButton, isLiveRanking, { matchToEdit = it }, { showLoadQuinielaDialog = true }, { id -> viewModel.onRemoveParticipant(id) }, { id -> viewModel.onToggleComparison(id) })
-                "Tarjetas" -> CardsView(allMatches.first(), filteredParticipants, resultsMap, currentScores, currentRanks, pinnedParticipantCategories, pinnedParticipantIds, pinnedCategories, showAddButton, isLiveRanking, { showLoadQuinielaDialog = true }, { id -> viewModel.onRemoveParticipant(id) })
-                "Ranking" -> GlobalRankingView(filteredParticipants, currentScores, currentRanks)
+                "Tarjetas" -> CardsView(
+                    allMatches = allMatches,
+                    dayMatches = dayMatches,
+                    participants = filteredParticipants, 
+                    resultsMap = resultsMap, 
+                    scores = cardsScoresAndRanks.first, 
+                    ranks = cardsScoresAndRanks.second, 
+                    confirmedIds = confirmedIds,
+                    pinnedParticipantCategories = pinnedParticipantCategories, 
+                    pinnedParticipantIds = pinnedParticipantIds, 
+                    pinnedCategories = pinnedCategories, 
+                    availableDates = distinctDates,
+                    selectedDate = selectedCardsDate,
+                    datesWithSimulations = datesWithSimulations,
+                    comparisonParticipantId = comparisonParticipantId,
+                    showOnlyDayPoints = showOnlyDayPoints,
+                    showAddButton = showAddButton, 
+                    isLiveRanking = isLiveRanking, 
+                    onSimularMatch = { matchToEdit = it },
+                    onDateSelected = { selectedCardsDate = it },
+                    onToggleDayPoints = { showOnlyDayPoints = it },
+                    onAddParticipant = { showLoadQuinielaDialog = true }, 
+                    onRemoveParticipant = { id -> viewModel.onRemoveParticipant(id) },
+                    onToggleComparison = { id -> viewModel.onToggleComparison(id) }
+                )
+                "Ranking" -> {
+                    // We get all participants from baseParticipants to ignore the UI filters (search/dropdown)
+                    // only for the Ranking view
+                    GlobalRankingView(
+                        participants = baseParticipants,
+                        scores = currentScores,
+                        ranks = currentRanks,
+                        baseRanks = baseRanks,
+                        allMatches = allMatches,
+                        resultsMap = resultsMap,
+                        onSimulateResult = { match, h, a ->
+                            resultsMap[match.id] = com.beetik.quinielamalenkamexico2026.model.MatchScore(h, a)
+                            viewModel.saveCurrentState()
+                        },
+                        onMatchClick = { matchToEdit = it }
+                    )
+                }
             }
         }
     }

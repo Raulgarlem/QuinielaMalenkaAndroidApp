@@ -22,17 +22,24 @@ import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 fun GroupStandingsView(
     allMatches: List<Match>,
     resultsMap: Map<String, Pair<Int, Int>>,
-    userGroupWinners: Map<String, String>
+    userGroupWinners: Map<String, String>,
+    headerContent: (@Composable () -> Unit)? = null
 ) {
     val groups = remember(allMatches) { allMatches.map { it.group }.distinct().sorted() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
+        if (headerContent != null) {
+            item {
+                headerContent()
+            }
+        }
+        
         items(groups) { groupName ->
-            Column {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 // User prediction header
                 val predictedWinner = userGroupWinners[groupName] ?: "-"
                 Surface(
@@ -78,13 +85,16 @@ fun StandingsTable(groupName: String, allMatches: List<Match>, results: Map<Stri
             modifier = Modifier.background(Color(0xFF333333)).padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Pos", modifier = Modifier.width(30.dp), textAlign = TextAlign.Center, fontSize = 10.sp, color = Color.Gray)
-            Text("Equipo", modifier = Modifier.weight(1f), fontSize = 10.sp, color = Color.Gray)
-            Text("PJ", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 10.sp, color = Color.Gray)
-            Text("G", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 10.sp, color = Color.Gray)
-            Text("E", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 10.sp, color = Color.Gray)
-            Text("P", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 10.sp, color = Color.Gray)
-            Text("Pts", modifier = Modifier.width(30.dp), textAlign = TextAlign.Center, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Gold)
+            Text("Pos", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("Equipo", modifier = Modifier.weight(1f), fontSize = 9.sp, color = Color.Gray)
+            Text("PJ", modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("G", modifier = Modifier.width(20.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("E", modifier = Modifier.width(20.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("P", modifier = Modifier.width(20.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("GF", modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("GC", modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("DG", modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 9.sp, color = Color.Gray)
+            Text("Pts", modifier = Modifier.width(28.dp), textAlign = TextAlign.Center, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Gold)
         }
         
         stats.forEachIndexed { index, team ->
@@ -92,18 +102,23 @@ fun StandingsTable(groupName: String, allMatches: List<Match>, results: Map<Stri
                 modifier = Modifier.padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("${index + 1}", modifier = Modifier.width(30.dp), textAlign = TextAlign.Center, fontSize = 12.sp, color = Color.White)
+                Text("${index + 1}", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
                 Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    Text(team.flag, fontSize = 16.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(team.name, fontSize = 12.sp, color = Color.White, maxLines = 1)
+                    Text(team.flag, fontSize = 14.sp)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(team.name, fontSize = 11.sp, color = Color.White, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
                 val pj = team.wins + team.draws + team.losses
-                Text("$pj", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 12.sp, color = Color.White)
-                Text("${team.wins}", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 12.sp, color = Color.White)
-                Text("${team.draws}", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 12.sp, color = Color.White)
-                Text("${team.losses}", modifier = Modifier.width(25.dp), textAlign = TextAlign.Center, fontSize = 12.sp, color = Color.White)
-                Text("${team.points}", modifier = Modifier.width(30.dp), textAlign = TextAlign.Center, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Gold)
+                Text("$pj", modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
+                Text("${team.wins}", modifier = Modifier.width(20.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
+                Text("${team.draws}", modifier = Modifier.width(20.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
+                Text("${team.losses}", modifier = Modifier.width(20.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
+                Text("${team.gs}", modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
+                Text("${team.gc}", modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
+                val dg = team.gs - team.gc
+                val dgText = if (dg > 0) "+$dg" else "$dg"
+                Text(dgText, modifier = Modifier.width(22.dp), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.White)
+                Text("${team.points}", modifier = Modifier.width(28.dp), textAlign = TextAlign.Center, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Gold)
             }
             if (index < stats.size - 1) HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f))
         }

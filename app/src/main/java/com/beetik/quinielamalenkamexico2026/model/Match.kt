@@ -8,7 +8,9 @@ data class Match(
     val homeTeam: String,
     val homeFlag: String,
     val awayTeam: String,
-    val awayFlag: String
+    val awayFlag: String,
+    val realHomeScore: Int? = null,
+    val realAwayScore: Int? = null
 )
 
 data class MatchResult(

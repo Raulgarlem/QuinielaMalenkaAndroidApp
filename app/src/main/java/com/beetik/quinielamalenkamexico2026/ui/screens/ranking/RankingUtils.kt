@@ -1,7 +1,6 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens.ranking
 
 import androidx.compose.ui.graphics.Color
-import com.beetik.quinielamalenkamexico2026.data.MatchRepository
 import com.beetik.quinielamalenkamexico2026.model.Match
 import com.beetik.quinielamalenkamexico2026.model.MatchScore
 

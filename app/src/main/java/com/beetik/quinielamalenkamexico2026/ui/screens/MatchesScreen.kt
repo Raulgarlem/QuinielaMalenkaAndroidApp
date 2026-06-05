@@ -1,18 +1,22 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import android.content.res.Configuration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,10 +41,15 @@ import java.util.*
 @Composable
 fun PartidosScreen() {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val gson = remember { Gson() }
     
-    var selectedView by remember { mutableStateOf("Partidos") }
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    var selectedView by rememberSaveable { mutableStateOf("Partidos") }
+    var isSimulationMode by rememberSaveable { mutableStateOf(false) }
     
     // Timezone handling
     val mexicoCityZone = "America/Mexico_City"
@@ -53,12 +62,13 @@ fun PartidosScreen() {
     val sdfLocalDisplayDate = remember { SimpleDateFormat("d 'de' MMMM", Locale.getDefault()) }
     
     var savedQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
+    var selectedQuinielaId by rememberSaveable { mutableStateOf<Int?>(null) }
     var selectedQuiniela by remember { mutableStateOf<QuinielaEntity?>(null) }
-    var showDropdown by remember { mutableStateOf(false) }
+    var rankingResults by remember { mutableStateOf<Map<String, MatchResult>>(emptyMap()) }
     
     val allMatches = MatchRepository.allMatches
     val groups = listOf("Todos") + allMatches.map { it.group }.distinct().sorted()
-    var selectedGroupIndex by remember { mutableIntStateOf(0) }
+    var selectedGroupIndex by rememberSaveable { mutableIntStateOf(0) }
     
     val matchResults = remember(selectedQuiniela) {
         selectedQuiniela?.let {
@@ -76,8 +86,23 @@ fun PartidosScreen() {
 
     LaunchedEffect(Unit) {
         savedQuinielas = database.quinielaDao().getAllQuinielas()
-        if (savedQuinielas.isNotEmpty() && selectedQuiniela == null) {
-            selectedQuiniela = savedQuinielas.first()
+        if (savedQuinielas.isNotEmpty()) {
+            selectedQuiniela = if (selectedQuinielaId != null) {
+                savedQuinielas.find { it.id == selectedQuinielaId } ?: savedQuinielas.first()
+            } else {
+                savedQuinielas.first()
+            }
+            selectedQuinielaId = selectedQuiniela?.id
+        }
+
+        // Load active ranking results for simulation
+        val activeConfig = database.rankingConfigDao().getAllConfigs().find { it.isActive }
+        if (activeConfig != null) {
+            val type = object : TypeToken<Map<String, com.beetik.quinielamalenkamexico2026.model.MatchScore>>() {}.type
+            val scoresMap: Map<String, com.beetik.quinielamalenkamexico2026.model.MatchScore> = gson.fromJson(activeConfig.resultsJson, type) ?: emptyMap()
+            rankingResults = scoresMap.mapValues { (_, score) ->
+                MatchResult(score.home.toString(), score.away.toString())
+            }
         }
     }
 
@@ -91,16 +116,21 @@ fun PartidosScreen() {
     }
 
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            Column {
-                CenterAlignedTopAppBar(
-                    title = { Text("PARTIDOS", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium) },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent, titleContentColor = Gold)
-                )
+            Column(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
+                if (!isLandscape) {
+                    CenterAlignedTopAppBar(
+                        title = { Text("PARTIDOS", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium) },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent, titleContentColor = Gold),
+                        scrollBehavior = scrollBehavior
+                    )
+                }
                 TabRow(
                     selectedTabIndex = if (selectedView == "Partidos") 0 else 1,
                     containerColor = Color.Transparent,
                     contentColor = Gold,
+                    modifier = Modifier.height(if (isLandscape) 40.dp else 48.dp),
                     indicator = { tabPositions ->
                         TabRowDefaults.SecondaryIndicator(
                             Modifier.tabIndicatorOffset(tabPositions[if (selectedView == "Partidos") 0 else 1]),
@@ -112,12 +142,12 @@ fun PartidosScreen() {
                     Tab(
                         selected = selectedView == "Partidos",
                         onClick = { selectedView = "Partidos" },
-                        text = { Text("Partidos", fontWeight = FontWeight.Bold) }
+                        text = { Text("Partidos", fontWeight = FontWeight.Bold, fontSize = if (isLandscape) 12.sp else 14.sp) }
                     )
                     Tab(
                         selected = selectedView == "Posiciones",
                         onClick = { selectedView = "Posiciones" },
-                        text = { Text("Posiciones", fontWeight = FontWeight.Bold) }
+                        text = { Text("Posiciones", fontWeight = FontWeight.Bold, fontSize = if (isLandscape) 12.sp else 14.sp) }
                     )
                 }
             }
@@ -130,120 +160,181 @@ fun PartidosScreen() {
                 .padding(innerPadding)
         ) {
             if (selectedView == "Partidos") {
-                // Quiniela Selector Dropdown
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    OutlinedCard(
-                        onClick = { showDropdown = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    "Viendo pronósticos de:",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = selectedQuiniela?.let { "${it.quinielaName} - ${it.propietarioName}" } ?: "Seleccionar Quiniela",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Gold
-                                )
-                            }
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Gold)
-                        }
-                    }
-
-                    DropdownMenu(
-                        expanded = showDropdown,
-                        onDismissRequest = { showDropdown = false },
-                        modifier = Modifier.fillMaxWidth(0.9f)
-                    ) {
-                        if (savedQuinielas.isEmpty()) {
-                            DropdownMenuItem(
-                                text = { Text("No hay quinielas guardadas") },
-                                onClick = { showDropdown = false }
-                            )
-                        } else {
-                            savedQuinielas.forEach { quiniela ->
-                                DropdownMenuItem(
-                                    text = { 
-                                        Column {
-                                            Text(quiniela.quinielaName, fontWeight = FontWeight.Bold)
-                                            Text(quiniela.propietarioName, style = MaterialTheme.typography.bodySmall)
-                                        }
-                                    },
-                                    onClick = {
-                                        selectedQuiniela = quiniela
-                                        showDropdown = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                ScrollableTabRow(
-                    selectedTabIndex = selectedGroupIndex,
-                    containerColor = Color.Transparent,
-                    contentColor = Gold,
-                    edgePadding = 16.dp,
-                    divider = {},
-                    indicator = { tabPositions ->
-                        if (selectedGroupIndex < tabPositions.size) {
-                            TabRowDefaults.SecondaryIndicator(
-                                modifier = Modifier.tabIndicatorOffset(tabPositions[selectedGroupIndex]),
-                                color = Gold
-                            )
-                        }
-                    }
-                ) {
-                    groups.forEachIndexed { index, group ->
-                        Tab(
-                            selected = selectedGroupIndex == index,
-                            onClick = { selectedGroupIndex = index },
-                            text = { 
-                                Text(
-                                    group, 
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    style = if (selectedGroupIndex == index) 
-                                        MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
-                                    else 
-                                        MaterialTheme.typography.bodyMedium
-                                ) 
-                            },
-                            selectedContentColor = Gold,
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
                 MatchesListView(
                     filteredMatches = filteredMatches,
                     matchResults = matchResults,
                     sdfCDMX = sdfCDMX,
                     sdfLocalTime = sdfLocalTime,
-                    sdfLocalDisplayDate = sdfLocalDisplayDate
+                    sdfLocalDisplayDate = sdfLocalDisplayDate,
+                    headerContent = {
+                        Column {
+                            QuinielaSelector(
+                                selectedQuiniela = selectedQuiniela,
+                                savedQuinielas = savedQuinielas,
+                                isLandscape = isLandscape,
+                                onQuinielaSelected = { 
+                                    selectedQuiniela = it
+                                    selectedQuinielaId = it.id
+                                }
+                            )
+
+                            ScrollableTabRow(
+                                selectedTabIndex = selectedGroupIndex,
+                                containerColor = Color.Transparent,
+                                contentColor = Gold,
+                                edgePadding = 16.dp,
+                                modifier = Modifier.height(if (isLandscape) 36.dp else 48.dp),
+                                divider = {},
+                                indicator = { tabPositions ->
+                                    if (selectedGroupIndex < tabPositions.size) {
+                                        TabRowDefaults.SecondaryIndicator(
+                                            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedGroupIndex]),
+                                            color = Gold
+                                        )
+                                    }
+                                }
+                            ) {
+                                groups.forEachIndexed { index, group ->
+                                    Tab(
+                                        selected = selectedGroupIndex == index,
+                                        onClick = { selectedGroupIndex = index },
+                                        text = { 
+                                            Text(
+                                                group, 
+                                                modifier = Modifier.padding(vertical = if (isLandscape) 0.dp else 4.dp),
+                                                style = if (selectedGroupIndex == index) 
+                                                    MaterialTheme.typography.bodyMedium.copy(
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = if (isLandscape) 11.sp else 14.sp
+                                                    )
+                                                else 
+                                                    MaterialTheme.typography.bodySmall.copy(
+                                                        fontSize = if (isLandscape) 11.sp else 12.sp
+                                                    )
+                                            ) 
+                                        },
+                                        selectedContentColor = Gold,
+                                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (!isLandscape) Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
                 )
             } else {
-                val convertedResults = matchResults.mapValues { (_, res) ->
-                    (res.homeScore.toIntOrNull() ?: 0) to (res.awayScore.toIntOrNull() ?: 0)
+                val convertedResults = remember(isSimulationMode, matchResults, rankingResults, allMatches) {
+                    if (isSimulationMode) {
+                        // Use simulated results from General Quiniela (Ranking)
+                        rankingResults.mapValues { (_, res) ->
+                            (res.homeScore.toIntOrNull() ?: 0) to (res.awayScore.toIntOrNull() ?: 0)
+                        }
+                    } else {
+                        // Real mode: Show only matches that have a recorded real score
+                        allMatches.filter { it.realHomeScore != null && it.realAwayScore != null }
+                            .associate { it.id to (it.realHomeScore!! to it.realAwayScore!!) }
+                    }
                 }
+
                 GroupStandingsView(
-                    allMatches = allMatches,
+                    allMatches = if (selectedGroupIndex == 0) allMatches else allMatches.filter { it.group == groups[selectedGroupIndex] },
                     resultsMap = convertedResults,
-                    userGroupWinners = userGroupWinners
+                    userGroupWinners = userGroupWinners,
+                    headerContent = {
+                        Column {
+                            QuinielaSelector(
+                                selectedQuiniela = selectedQuiniela,
+                                savedQuinielas = savedQuinielas,
+                                isLandscape = isLandscape,
+                                onQuinielaSelected = { 
+                                    selectedQuiniela = it
+                                    selectedQuinielaId = it.id
+                                }
+                            )
+
+                            // Simulation Toggle
+                            Surface(
+                                color = Gold.copy(alpha = 0.05f),
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = if (isSimulationMode) "MODO SIMULACIÓN" else "MODO REAL",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = if (isSimulationMode) Gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                        Text(
+                                            text = if (isSimulationMode) "Incluye tus pronósticos para partidos futuros" else "Solo resultados oficiales",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isSimulationMode,
+                                        onCheckedChange = { isSimulationMode = it },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Gold,
+                                            checkedTrackColor = Gold.copy(alpha = 0.3f),
+                                            uncheckedThumbColor = Color.Gray,
+                                            uncheckedTrackColor = Color.Gray.copy(alpha = 0.2f)
+                                        ),
+                                        modifier = Modifier.scale(0.8f)
+                                    )
+                                }
+                            }
+
+                            ScrollableTabRow(
+                                selectedTabIndex = selectedGroupIndex,
+                                containerColor = Color.Transparent,
+                                contentColor = Gold,
+                                edgePadding = 16.dp,
+                                modifier = Modifier.height(if (isLandscape) 36.dp else 48.dp),
+                                divider = {},
+                                indicator = { tabPositions ->
+                                    if (selectedGroupIndex < tabPositions.size) {
+                                        TabRowDefaults.SecondaryIndicator(
+                                            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedGroupIndex]),
+                                            color = Gold
+                                        )
+                                    }
+                                }
+                            ) {
+                                groups.forEachIndexed { index, group ->
+                                    Tab(
+                                        selected = selectedGroupIndex == index,
+                                        onClick = { selectedGroupIndex = index },
+                                        text = { 
+                                            Text(
+                                                group, 
+                                                modifier = Modifier.padding(vertical = if (isLandscape) 0.dp else 4.dp),
+                                                style = if (selectedGroupIndex == index) 
+                                                    MaterialTheme.typography.bodyMedium.copy(
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = if (isLandscape) 11.sp else 14.sp
+                                                    )
+                                                else 
+                                                    MaterialTheme.typography.bodySmall.copy(
+                                                        fontSize = if (isLandscape) 11.sp else 12.sp
+                                                    )
+                                            ) 
+                                        },
+                                        selectedContentColor = Gold,
+                                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (!isLandscape) Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
                 )
             }
         }
@@ -251,135 +342,78 @@ fun PartidosScreen() {
 }
 
 @Composable
-fun MatchItem(match: Match, prediction: MatchResult?, displayDate: String, displayTime: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp, 
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-        )
+fun QuinielaSelector(
+    selectedQuiniela: QuinielaEntity?,
+    savedQuinielas: List<QuinielaEntity>,
+    isLandscape: Boolean,
+    onQuinielaSelected: (QuinielaEntity) -> Unit
+) {
+    var showDropdown by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = if (isLandscape) 2.dp else 8.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            // Reverted Top Row: Group, Date and Time
+        OutlinedCard(
+            onClick = { showDropdown = true },
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(if (isLandscape) 6.dp else 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "${match.group} • $displayDate",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "$displayTime hrs",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.FilterList, 
+                        contentDescription = null, 
+                        tint = Gold, 
+                        modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = selectedQuiniela?.let { "${it.quinielaName} - ${it.propietarioName}" } ?: "Seleccionar Quiniela",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = if (isLandscape) 11.sp else 12.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = Gold
+                    )
+                }
+                Icon(
+                    Icons.Default.ArrowDropDown, 
+                    contentDescription = null, 
+                    tint = Gold, 
+                    modifier = Modifier.size(if (isLandscape) 20.dp else 24.dp)
                 )
             }
-            
-            Spacer(modifier = Modifier.height(12.dp))
+        }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Home Team
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(match.homeFlag, fontSize = 28.sp)
-                    Text(
-                        match.homeTeam,
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                ) {
-                    Text(
-                        "VS",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Gold.copy(alpha = 0.7f)
-                    )
-                    // Display actual result if available (placeholder for now)
-                    Text(
-                        "-", 
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Away Team
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(match.awayFlag, fontSize = 28.sp)
-                    Text(
-                        match.awayTeam,
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            // Bottom Section: Prediction and Points (Visible when a quiniela is selected)
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 12.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(horizontalAlignment = Alignment.Start) {
-                    Text(
-                        "Tu pronóstico",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    val scoreText = if (prediction != null && prediction.homeScore.isNotEmpty() && prediction.awayScore.isNotEmpty()) {
-                        "${prediction.homeScore} - ${prediction.awayScore}"
-                    } else {
-                        "-  -"
-                    }
-                    Text(
-                        text = scoreText,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
-                
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        "Puntos",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    // When match is finished, show points. For now, show "-" if not finished.
-                    // If we had a 'isFinished' property, we'd use it here.
-                    Text(
-                        text = "-", 
-                        fontWeight = FontWeight.Bold,
-                        color = Gold,
-                        style = MaterialTheme.typography.bodyLarge
+        DropdownMenu(
+            expanded = showDropdown,
+            onDismissRequest = { showDropdown = false },
+            modifier = Modifier.fillMaxWidth(0.9f)
+        ) {
+            if (savedQuinielas.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("No hay quinielas guardadas") },
+                    onClick = { showDropdown = false }
+                )
+            } else {
+                savedQuinielas.forEach { quiniela ->
+                    DropdownMenuItem(
+                        text = { 
+                            Column {
+                                Text(quiniela.quinielaName, fontWeight = FontWeight.Bold)
+                                Text(quiniela.propietarioName, style = MaterialTheme.typography.bodySmall)
+                            }
+                        },
+                        onClick = {
+                            onQuinielaSelected(quiniela)
+                            showDropdown = false
+                        }
                     )
                 }
             }
