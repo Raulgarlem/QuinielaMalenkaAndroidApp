@@ -101,6 +101,7 @@ fun QuinielaScreen(
     val gson = remember { Gson() }
 
     var originalData by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var currentId by remember { mutableStateOf(quinielaId) }
     var isDataLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(quinielaId) {
@@ -110,6 +111,7 @@ fun QuinielaScreen(
                 if (entity != null) {
                     originalData = entity
                     withContext(Dispatchers.Main) {
+                        currentId = entity.id
                         quinielaName = entity.quinielaName
                         propietarioName = entity.propietarioName
                         userEmail = entity.userEmail
@@ -133,10 +135,10 @@ fun QuinielaScreen(
         }
     }
 
-    val hasChanges = remember(isDataLoaded, quinielaName, propietarioName, userEmail, matchResults, groupWinners, originalData) {
+    val hasChanges = remember(isDataLoaded, quinielaName, propietarioName, userEmail, matchResults, groupWinners, originalData, currentId) {
         if (!isDataLoaded) return@remember false
         
-        if (quinielaId == -1) {
+        if (currentId == -1) {
              quinielaName.isNotBlank() || propietarioName.isNotBlank() || userEmail.isNotBlank() || 
              matchResults.values.any { it.homeScore.isNotEmpty() || it.awayScore.isNotEmpty() } || 
              groupWinners.isNotEmpty()
@@ -175,17 +177,35 @@ fun QuinielaScreen(
         coroutineScope.launch {
             val existing = database.quinielaDao().getQuinielaByNameAndOwner(quinielaName, propietarioName)
             
-            if (!forceOverwrite && existing != null && existing.id != quinielaId) {
-                withContext(Dispatchers.Main) {
-                    showOverwriteDialog = true
-                }
-                return@launch
-            }
-
             val resultsJson = gson.toJson(matchResults)
             val winnersJson = gson.toJson(groupWinners)
+
+            if (!forceOverwrite && existing != null && existing.id != currentId) {
+                // Check if the content is different before showing overwrite dialog
+                val isIdentical = existing.quinielaName == quinielaName &&
+                                  existing.propietarioName == propietarioName &&
+                                  existing.userEmail == userEmail &&
+                                  existing.resultsJson == resultsJson &&
+                                  existing.winnersJson == winnersJson
+                
+                if (!isIdentical) {
+                    withContext(Dispatchers.Main) {
+                        showOverwriteDialog = true
+                    }
+                    return@launch
+                } else {
+                    // It's identical, just adopt this ID and consider it saved
+                    withContext(Dispatchers.Main) {
+                        currentId = existing.id
+                        originalData = existing
+                        onComplete?.invoke()
+                    }
+                    return@launch
+                }
+            }
+
             val entity = QuinielaEntity(
-                id = if (quinielaId != -1) quinielaId else (existing?.id ?: 0),
+                id = if (currentId != -1) currentId else (existing?.id ?: 0),
                 quinielaName = quinielaName,
                 propietarioName = propietarioName,
                 userEmail = userEmail,
@@ -193,8 +213,10 @@ fun QuinielaScreen(
                 winnersJson = winnersJson,
                 isSent = isSentByServer
             )
-            database.quinielaDao().insertQuiniela(entity)
+            val newId = database.quinielaDao().insertQuiniela(entity).toInt()
             withContext(Dispatchers.Main) {
+                currentId = newId
+                originalData = entity.copy(id = newId)
                 if (!forceOverwrite) {
                     Toast.makeText(context, "¡Quiniela guardada!", Toast.LENGTH_SHORT).show()
                 }
@@ -363,6 +385,8 @@ fun QuinielaScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
+                                        currentId = entity.id
+                                        originalData = entity
                                         quinielaName = entity.quinielaName
                                         propietarioName = entity.propietarioName
                                         userEmail = entity.userEmail
@@ -482,6 +506,8 @@ fun QuinielaScreen(
                         userEmail = ""
                         matchResults = allMatches.associate { it.id to MatchResult() }
                         groupWinners = emptyMap()
+                        currentId = -1
+                        originalData = null
                         showValidationErrors = false
                         showClearAllDialog = false
                         Toast.makeText(context, "Contenido borrado.", Toast.LENGTH_SHORT).show()

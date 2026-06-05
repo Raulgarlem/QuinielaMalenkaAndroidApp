@@ -31,14 +31,19 @@ import com.google.gson.reflect.TypeToken
 import java.util.*
 import java.text.SimpleDateFormat
 
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.RankingViewModel
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InicioScreen() {
+fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
     val context = LocalContext.current
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val gson = remember { Gson() }
     val allMatches = MatchRepository.allMatches
     val groupCount = remember { allMatches.groupBy { it.group }.size }
+    
+    val officialParticipants = rankingViewModel.baseParticipants.filter { !it.id.startsWith("loaded_") }
     
     var savedQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
     var selectedQuiniela by remember { mutableStateOf<QuinielaEntity?>(null) }
@@ -92,7 +97,129 @@ fun InicioScreen() {
     val displayTime = nextMatchData.second
     val displayDate = nextMatchData.third
 
-    val selectedQuinielaStatus = remember(selectedQuiniela) {
+    // --- Lógica de Estadísticas y Ranking ---
+    val statsInfo = remember(selectedQuiniela, officialParticipants, allMatches) {
+        val totalParticipantsGeneral = officialParticipants.size
+
+        val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
+        
+        // 1. Determinar ganadores reales de grupos finalizados
+        val matchesByGroup = allMatches.groupBy { it.group }
+        val realGroupWinners = matchesByGroup.mapValues { (groupName, matches) ->
+            val finishedMatchesInGroup = matches.filter { it.realHomeScore != null && it.realAwayScore != null }
+            if (finishedMatchesInGroup.isEmpty()) return@mapValues null
+            
+            val table = mutableMapOf<String, Int>()
+            val goals = mutableMapOf<String, Int>()
+            
+            finishedMatchesInGroup.forEach { m ->
+                val h = m.realHomeScore!!
+                val a = m.realAwayScore!!
+                goals[m.homeTeam] = (goals[m.homeTeam] ?: 0) + h
+                goals[m.awayTeam] = (goals[m.awayTeam] ?: 0) + a
+                when {
+                    h > a -> table[m.homeTeam] = (table[m.homeTeam] ?: 0) + 3
+                    h < a -> table[m.awayTeam] = (table[m.awayTeam] ?: 0) + 3
+                    else -> {
+                        table[m.homeTeam] = (table[m.homeTeam] ?: 0) + 1
+                        table[m.awayTeam] = (table[m.awayTeam] ?: 0) + 1
+                    }
+                }
+            }
+            table.keys.sortedWith(compareByDescending<String> { table[it] ?: 0 }.thenByDescending { goals[it] ?: 0 }).firstOrNull()
+        }
+
+        fun calculateTotalPoints(matchPreds: Map<String, Any>, winnerPreds: Map<String, String>): Triple<Int, Int, Int> {
+            var p = 0
+            var h = 0
+            var e = 0
+            
+            allMatches.forEach { match ->
+                val rh = match.realHomeScore
+                val ra = match.realAwayScore
+                if (rh != null && ra != null) {
+                    val pred = matchPreds[match.id]
+                    val (uh, ua) = when (pred) {
+                        is Pair<*, *> -> (pred.first as? Int) to (pred.second as? Int)
+                        is MatchResult -> pred.homeScore.toIntOrNull() to pred.awayScore.toIntOrNull()
+                        else -> null to null
+                    }
+                    
+                    if (uh != null && ua != null) {
+                        if (uh == rh && ua == ra) {
+                            e++
+                            h++
+                            p += 2
+                        } else {
+                            val rW = when { rh > ra -> 1; rh < ra -> 2; else -> 0 }
+                            val uW = when { uh > ua -> 1; uh < ua -> 2; else -> 0 }
+                            if (rW == uW) {
+                                h++
+                                p += 1
+                            }
+                        }
+                    }
+                }
+            }
+            
+            realGroupWinners.forEach { (group, realWinner) ->
+                val isGroupFinished = matchesByGroup[group]?.all { it.realHomeScore != null } == true
+                if (isGroupFinished && realWinner != null) {
+                    if (winnerPreds[group] == realWinner) p += 2
+                }
+            }
+            return Triple(p, h, e)
+        }
+
+        // 1. Calcular puntos de la quiniela seleccionada
+        val currentQ = selectedQuiniela
+        val userMatchPreds: Map<String, MatchResult> = if (currentQ != null) {
+            try { gson.fromJson(currentQ.resultsJson, resultsType) } catch (_: Exception) { emptyMap() }
+        } else emptyMap()
+        val userWinnerPreds: Map<String, String> = if (currentQ != null) {
+            val winnersType = object : TypeToken<Map<String, String>>() {}.type
+            try { gson.fromJson(currentQ.winnersJson, winnersType) } catch (_: Exception) { emptyMap() }
+        } else emptyMap()
+        
+        val currentStats = calculateTotalPoints(userMatchPreds, userWinnerPreds)
+        
+        // 2. Calcular puntos de los participantes oficiales de la tabla general
+        val officialScores = officialParticipants.map { participant ->
+            calculateTotalPoints(participant.predictions, participant.groupWinnerPredictions).first
+        }
+        
+        // 3. Determinar posición (Igual que en RankingScreen para quinielas añadidas)
+        val officialScoreToRank = officialScores.distinct().sortedByDescending { it }
+            .withIndex().associate { it.value to it.index + 1 }
+            
+        val rank = if (currentQ != null) {
+            val score = currentStats.first
+            val matchScore = officialScoreToRank.keys.firstOrNull { it <= score }
+            if (matchScore != null) {
+                officialScoreToRank[matchScore] ?: 1
+            } else {
+                officialScoreToRank.size + 1
+            }
+        } else 0
+        
+        // 4. Efectividad (Puntos reales * 100 / Puntos máximos posibles hasta ahora)
+        val finishedMatches = allMatches.count { it.realHomeScore != null }
+        val finishedGroups = matchesByGroup.count { (group, matches) -> matches.all { it.realHomeScore != null } }
+        val maxPointsPossible = (finishedMatches * 2) + (finishedGroups * 2)
+
+        val effectiveness = if (maxPointsPossible > 0) (currentStats.first.toFloat() / maxPointsPossible * 100).toInt() else 0
+        
+        object {
+            val points = currentStats.first
+            val hits = currentStats.second
+            val exacts = currentStats.third
+            val eff = effectiveness
+            val position = rank
+            val total = totalParticipantsGeneral
+        }
+    }
+
+    val selectedQuinielaStatus = remember(selectedQuiniela, statsInfo) {
         val quiniela = selectedQuiniela ?: return@remember Triple("Borrador", Color(0xFF9C27B0), false)
         
         val isComplete = try {
@@ -152,11 +279,6 @@ fun InicioScreen() {
                         color = Gold
                     )
                 },
-                navigationIcon = {
-                    IconButton(onClick = { }) {
-                        Icon(Icons.Default.Menu, contentDescription = "Menu", tint = Gold)
-                    }
-                },
                 actions = {
                     IconButton(onClick = { }) {
                         Icon(Icons.Default.Notifications, contentDescription = "Notifications", tint = Gold)
@@ -195,48 +317,53 @@ fun InicioScreen() {
             }
 
             item {
-                SummaryCard(
-                    title = "MI QUINIELAS OFICIAL",
-                    subtitle = selectedQuiniela?.quinielaName ?: "(Sin Quiniela)",
-                    status = selectedQuinielaStatus.first,
-                    statusColor = selectedQuinielaStatus.second,
-                    points = "0 pts",
-                    rank = if (selectedQuinielaStatus.third) "#124 de 538" else "-",
-                    isOfficial = selectedQuiniela?.isFavorite ?: false,
-                    onSelectorClick = { showQuinielaDropdown = true }
-                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    SummaryCard(
+                        title = "MI QUINIELAS OFICIAL",
+                        subtitle = selectedQuiniela?.quinielaName ?: "(Sin Quiniela)",
+                        status = selectedQuinielaStatus.first,
+                        statusColor = selectedQuinielaStatus.second,
+                        points = "${statsInfo?.points ?: 0} pts",
+                        rank = if (statsInfo != null) "#${statsInfo.position} de ${statsInfo.total}" else "-",
+                        isOfficial = selectedQuiniela?.isFavorite ?: false,
+                        onSelectorClick = { showQuinielaDropdown = true }
+                    )
 
-                DropdownMenu(
-                    expanded = showQuinielaDropdown,
-                    onDismissRequest = { showQuinielaDropdown = false }
-                ) {
-                    if (savedQuinielas.isEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("No hay quinielas") },
-                            onClick = { showQuinielaDropdown = false }
-                        )
-                    } else {
-                        savedQuinielas.forEach { quiniela ->
-                            DropdownMenuItem(
-                                text = { 
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(quiniela.quinielaName)
-                                        if (quiniela.isFavorite) {
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Icon(
-                                                painter = painterResource(id = android.R.drawable.star_on),
-                                                contentDescription = null,
-                                                tint = Gold,
-                                                modifier = Modifier.size(12.dp)
-                                            )
+                    // Alineamos el Dropdown a la derecha
+                    Box(modifier = Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 8.dp)) {
+                        DropdownMenu(
+                            expanded = showQuinielaDropdown,
+                            onDismissRequest = { showQuinielaDropdown = false }
+                        ) {
+                            if (savedQuinielas.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("No hay quinielas") },
+                                    onClick = { showQuinielaDropdown = false }
+                                )
+                            } else {
+                                savedQuinielas.forEach { quiniela ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(quiniela.quinielaName)
+                                                if (quiniela.isFavorite) {
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Icon(
+                                                        painter = painterResource(id = android.R.drawable.star_on),
+                                                        contentDescription = null,
+                                                        tint = Gold,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            selectedQuiniela = quiniela
+                                            showQuinielaDropdown = false
                                         }
-                                    }
-                                },
-                                onClick = {
-                                    selectedQuiniela = quiniela
-                                    showQuinielaDropdown = false
+                                    )
                                 }
-                            )
+                            }
                         }
                     }
                 }
@@ -265,7 +392,13 @@ fun InicioScreen() {
             }
             
             item {
-                StatsCard()
+                StatsCard(
+                    position = if (statsInfo != null) "#${statsInfo.position}" else "-",
+                    total = if (statsInfo != null) "de ${statsInfo.total}" else "",
+                    hits = "${statsInfo?.hits ?: 0}",
+                    exacts = "${statsInfo?.exacts ?: 0}",
+                    efficiency = "${statsInfo?.eff ?: 0}%"
+                )
             }
         }
     }
@@ -366,7 +499,13 @@ fun MatchPreviewCard(match: Match, displayDate: String, displayTime: String) {
 }
 
 @Composable
-fun StatsCard() {
+fun StatsCard(
+    position: String,
+    total: String,
+    hits: String,
+    exacts: String,
+    efficiency: String
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -377,10 +516,10 @@ fun StatsCard() {
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceAround
         ) {
-            StatItem("Posición actual", "#124", "de 538")
-            StatItem("Aciertos", "23", "")
-            StatItem("Exactos", "8", "")
-            StatItem("Efectividad", "61%", "")
+            StatItem("Posición actual", position, total)
+            StatItem("Aciertos", hits, "")
+            StatItem("Exactos", exacts, "")
+            StatItem("Efectividad", efficiency, "")
         }
     }
 }

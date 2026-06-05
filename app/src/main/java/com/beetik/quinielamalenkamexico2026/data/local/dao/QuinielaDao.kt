@@ -39,7 +39,7 @@ interface QuinielaDao {
     }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertQuiniela(quiniela: QuinielaEntity)
+    suspend fun insertQuiniela(quiniela: QuinielaEntity): Long
 
     @Delete
     suspend fun deleteQuiniela(quiniela: QuinielaEntity)
