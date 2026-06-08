@@ -52,6 +52,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FieldPath
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -249,14 +252,7 @@ fun QuinielaScreen(
         onBack()
     }
 
-    fun sendQuinielaToFirebase() {
-        val documentId = "${userEmail}_${quinielaName}_${propietarioName}"
-            .lowercase()
-            .trim()
-            .replace(" ", "_")
-            .replace(".", "_")
-            .replace("@", "_")
-
+    fun sendQuinielaToFirebase(collectionPath: String) {
         val resultsForFirebase = matchResults.mapValues { (_, result) ->
             mapOf(
                 "homeScore" to result.homeScore,
@@ -265,62 +261,84 @@ fun QuinielaScreen(
         }
 
         val quinielaData = hashMapOf(
-            "quinielaName" to quinielaName,
-            "propietarioName" to propietarioName,
-            "userEmail" to userEmail,
+            "quinielaName" to quinielaName.trim(),
+            "propietarioName" to propietarioName.trim(),
+            "userEmail" to userEmail.lowercase().trim(),
             "results" to resultsForFirebase,
             "groupWinners" to groupWinners,
             "updatedAt" to System.currentTimeMillis(),
-            "status" to "received",
+            "status" to if (collectionPath == "quinielas") "received" else "saved",
             "emailStatus" to "pending",
             "paymentReceived" to false
         )
 
-        firestore.collection("quinielas")
-            .document(documentId)
-            .set(quinielaData)
-            .addOnSuccessListener {
-                isSentByServer = true
-                saveQuinielaToRoom(forceOverwrite = true) // Update local status as well
-                
-                // Call Webhook
-                coroutineScope.launch(Dispatchers.IO) {
-                    try {
-                        val url = URL("https://n8n.beetikmx.com/webhook/quiniela-recibida")
-                        val connection = url.openConnection() as HttpURLConnection
-                        connection.requestMethod = "POST"
-                        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                        connection.doOutput = true
+        if (collectionPath == "quinielas") {
+            val documentId = "${userEmail}_${quinielaName}_${propietarioName}"
+                .lowercase()
+                .trim()
+                .replace(" ", "_")
+                .replace(".", "_")
+                .replace("@", "_")
 
-                        val payload = quinielaData.toMutableMap()
-                        payload["documentId"] = documentId
-                        val jsonPayload = gson.toJson(payload)
+            firestore.collection("quinielas")
+                .document(documentId)
+                .set(quinielaData)
+                .addOnSuccessListener {
+                    isSentByServer = true
+                    saveQuinielaToRoom(forceOverwrite = true) // Update local status as well
+                    
+                    coroutineScope.launch(Dispatchers.IO) {
+                        try {
+                            val url = URL("https://n8n.beetikmx.com/webhook/quiniela-recibida")
+                            val connection = url.openConnection() as HttpURLConnection
+                            connection.requestMethod = "POST"
+                            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                            connection.doOutput = true
 
-                        connection.outputStream.use { os ->
-                            os.write(jsonPayload.toByteArray(Charsets.UTF_8))
-                        }
+                            val payload = quinielaData.toMutableMap()
+                            payload["documentId"] = documentId
+                            val jsonPayload = gson.toJson(payload)
 
-                        val responseCode = connection.responseCode
-                        connection.disconnect()
-
-                        withContext(Dispatchers.Main) {
-                            if (responseCode in 200..299) {
-                                Toast.makeText(context, "¡Quiniela enviada correctamente!", Toast.LENGTH_LONG).show()
-                            } else {
-                                // Webhook failed but Firestore succeeded
-                                Toast.makeText(context, "¡Quiniela registrada! (Error en Webhook)", Toast.LENGTH_LONG).show()
+                            connection.outputStream.use { os ->
+                                os.write(jsonPayload.toByteArray(Charsets.UTF_8))
                             }
-                        }
-                    } catch (_: Exception) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "¡Quiniela registrada!", Toast.LENGTH_LONG).show()
+
+                            val responseCode = connection.responseCode
+                            connection.disconnect()
+
+                            withContext(Dispatchers.Main) {
+                                if (responseCode in 200..299) {
+                                    Toast.makeText(context, "¡Quiniela enviada correctamente!", Toast.LENGTH_LONG).show()
+                                } else {
+                                    // Webhook failed but Firestore succeeded
+                                    Toast.makeText(context, "¡Quiniela registrada! (Error en Webhook)", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        } catch (_: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "¡Quiniela registrada!", Toast.LENGTH_LONG).show()
+                            }
                         }
                     }
                 }
-            }
-            .addOnFailureListener { error ->
-                Toast.makeText(context, "Error al enviar: ${error.message}", Toast.LENGTH_LONG).show()
-            }
+                .addOnFailureListener { error ->
+                    Toast.makeText(context, "Error al sincronizar con la nube: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+        } else {
+            // For "guardadas"
+            val documentId = userEmail.lowercase().trim().replace("@", "_").replace(".", "_")
+            val mapKey = "${quinielaName.trim()} - ${propietarioName.trim()}"
+
+            firestore.collection("guardadas")
+                .document(documentId)
+                .set(mapOf(mapKey to quinielaData), SetOptions.merge())
+                .addOnSuccessListener {
+                    Toast.makeText(context, "¡Copia en la nube actualizada!", Toast.LENGTH_SHORT).show()
+                }
+                .addOnFailureListener { error ->
+                    Toast.makeText(context, "Error al sincronizar con la nube: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+        }
     }
 
     fun loadFirstQuinielaFromRoom() {
@@ -474,6 +492,31 @@ fun QuinielaScreen(
                 Button(
                     onClick = {
                         quinielaToDelete?.let { entity ->
+                            // Delete from Firestore "guardadas"
+                            val email = entity.userEmail.lowercase().trim()
+                            val docId = email.replace("@", "_").replace(".", "_")
+                            val mapKey = "${entity.quinielaName.trim()} - ${entity.propietarioName.trim()}"
+                            
+                            if (email.isNotBlank()) {
+                                firestore.collection("guardadas")
+                                    .document(docId)
+                                    .update(FieldPath.of(mapKey), FieldValue.delete())
+                                    .addOnSuccessListener {
+                                        Toast.makeText(context, "Sincronizado con nube", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .addOnFailureListener { e ->
+                                        // Si falla con FieldPath, intentamos con String directo por si acaso
+                                        firestore.collection("guardadas")
+                                            .document(docId)
+                                            .update(mapKey, FieldValue.delete())
+                                            .addOnFailureListener { e2 ->
+                                                Toast.makeText(context, "Error nube: ${e2.message}", Toast.LENGTH_LONG).show()
+                                            }
+                                    }
+                            } else {
+                                Toast.makeText(context, "Aviso: No tiene correo para borrar en nube", Toast.LENGTH_SHORT).show()
+                            }
+
                             coroutineScope.launch {
                                 database.quinielaDao().deleteQuiniela(entity)
                                 val updatedEntities = database.quinielaDao().getAllQuinielas()
@@ -543,7 +586,9 @@ fun QuinielaScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        saveQuinielaToRoom(forceOverwrite = true)
+                        saveQuinielaToRoom(forceOverwrite = true) {
+                            sendQuinielaToFirebase("guardadas")
+                        }
                     }
                 ) {
                     Text("Sobreescribir")
@@ -570,8 +615,9 @@ fun QuinielaScreen(
                 Button(
                     onClick = {
                         showSendConfirmDialog = false
-                        saveQuinielaToRoom(forceOverwrite = true)
-                        sendQuinielaToFirebase()
+                        saveQuinielaToRoom(forceOverwrite = true) {
+                            sendQuinielaToFirebase("quinielas")
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE61D25))
                 ) {
@@ -641,7 +687,9 @@ fun QuinielaScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                saveQuinielaToRoom()
+                                saveQuinielaToRoom {
+                                    sendQuinielaToFirebase("guardadas")
+                                }
                             },
                             modifier = Modifier.weight(1f),
                             enabled = isSaveEnabled,

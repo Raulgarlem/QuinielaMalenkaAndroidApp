@@ -37,6 +37,9 @@ import com.beetik.quinielamalenkamexico2026.data.local.entity.QuinielaEntity
 import com.beetik.quinielamalenkamexico2026.model.MatchResult
 import com.beetik.quinielamalenkamexico2026.ui.navigation.Screen
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
+import com.google.firebase.firestore.FieldPath
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.collect
@@ -164,6 +167,32 @@ fun QuinielasScreen(navController: NavController) {
                 Button(
                     onClick = {
                         quinielaToDelete?.let { entity ->
+                            // Delete from Firestore "guardadas"
+                            val firestore = FirebaseFirestore.getInstance()
+                            val email = entity.userEmail.lowercase().trim()
+                            val docId = email.replace("@", "_").replace(".", "_")
+                            val mapKey = "${entity.quinielaName.trim()} - ${entity.propietarioName.trim()}"
+                            
+                            if (email.isNotBlank()) {
+                                firestore.collection("guardadas")
+                                    .document(docId)
+                                    .update(FieldPath.of(mapKey), FieldValue.delete())
+                                    .addOnSuccessListener {
+                                        Toast.makeText(context, "Sincronizado con nube", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .addOnFailureListener { e ->
+                                        // Si falla con FieldPath, intentamos con String directo por si acaso
+                                        firestore.collection("guardadas")
+                                            .document(docId)
+                                            .update(mapKey, FieldValue.delete())
+                                            .addOnFailureListener { e2 ->
+                                                Toast.makeText(context, "Error nube: ${e2.message}", Toast.LENGTH_LONG).show()
+                                            }
+                                    }
+                            } else {
+                                Toast.makeText(context, "Aviso: No tiene correo para borrar en nube", Toast.LENGTH_SHORT).show()
+                            }
+
                             coroutineScope.launch {
                                 database.quinielaDao().deleteQuiniela(entity)
                                 quinielaToDelete = null
