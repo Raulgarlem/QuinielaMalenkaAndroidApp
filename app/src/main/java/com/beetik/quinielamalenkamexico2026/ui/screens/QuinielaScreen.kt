@@ -49,6 +49,7 @@ import com.beetik.quinielamalenkamexico2026.data.local.entity.QuinielaEntity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import com.google.firebase.firestore.FirebaseFirestore
 import java.net.HttpURLConnection
@@ -64,8 +65,15 @@ fun QuinielaScreen(
     quinielaId: Int = -1,
     onBack: () -> Unit = {}
 ) {
-    val allMatches = MatchRepository.allMatches
-    val groups = remember { allMatches.groupBy { it.group } }
+    var allMatches by remember { mutableStateOf(MatchRepository.allMatches) }
+    
+    LaunchedEffect(Unit) {
+        MatchRepository.getMatchesFlow().collect { updated ->
+            allMatches = updated
+        }
+    }
+
+    val groups = remember(allMatches) { allMatches.groupBy { it.group } }
     val groupNames = remember { groups.keys.toList() }
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()

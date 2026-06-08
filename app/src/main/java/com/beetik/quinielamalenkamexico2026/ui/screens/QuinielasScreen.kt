@@ -1,5 +1,6 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens
 
+import android.content.res.Configuration
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,6 +46,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun QuinielasScreen(navController: NavController) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val coroutineScope = rememberCoroutineScope()
     val gson = remember { Gson() }
@@ -195,10 +199,17 @@ fun QuinielasScreen(navController: NavController) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(
+                    top = if (isLandscape) 0.dp else innerPadding.calculateTopPadding(),
+                    bottom = innerPadding.calculateBottomPadding(),
+                    start = innerPadding.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+                    end = innerPadding.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
+                )
                 .padding(horizontal = 16.dp)
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
+            if (!isLandscape) {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -207,25 +218,27 @@ fun QuinielasScreen(navController: NavController) {
                 Column {
                     Text(
                         "MIS QUINIELAS",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = if (isLandscape) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        "Crea, gestiona y envía tus quinielas",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (!isLandscape) {
+                        Text(
+                            "Crea, gestiona y envía tus quinielas",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 
                 Icon(
                     Icons.Default.EmojiEvents,
                     contentDescription = null,
                     tint = Gold,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(if (isLandscape) 32.dp else 40.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(if (isLandscape) 8.dp else 16.dp))
 
             // Filter Tabs
             Row(
@@ -249,7 +262,7 @@ fun QuinielasScreen(navController: NavController) {
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(if (isLandscape) 8.dp else 16.dp))
 
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(12.dp),

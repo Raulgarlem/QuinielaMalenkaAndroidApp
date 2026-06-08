@@ -1,6 +1,13 @@
 package com.beetik.quinielamalenkamexico2026.data
 
+import android.util.Log
 import com.beetik.quinielamalenkamexico2026.model.Match
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.Dispatchers
 
 object MatchRepository {
     private val countryFlags = mapOf(
@@ -15,7 +22,7 @@ object MatchRepository {
         "Francia" to "🇫🇷", "Senegal" to "🇸🇳", "Irak" to "🇮🇶", "Noruega" to "🇳🇴",
         "Argentina" to "🇦🇷", "Austria" to "🇦🇹", "Jordania" to "🇯🇴", "Argelia" to "🇩🇿",
         "Portugal" to "🇵🇹", "Congo DR" to "🇨🇩", "Uzbekistán" to "🇺🇿", "Colombia" to "🇨🇴",
-        "Inglaterra" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Croacia" to "🇭🇷", "Ghana" to "🇬🇭", "Panamá" to "🇵🇦"
+        "Inglaterra" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Croacia" to "🇭🇷", "Ghana" to "🇭🇭", "Panamá" to "🇵🇦",
     )
 
     fun getFlag(country: String) = countryFlags[country] ?: "🏳️"
@@ -106,4 +113,67 @@ object MatchRepository {
         Match("L5", "Grupo L", "2026-06-27", "15:00", "Panamá", getFlag("Panamá"), "Inglaterra", getFlag("Inglaterra")),
         Match("L6", "Grupo L", "2026-06-27", "15:00", "Croacia", getFlag("Croacia"), "Ghana", getFlag("Ghana"))
     )
+
+    fun getMatchesFlow(): Flow<List<Match>> = callbackFlow {
+        val db = FirebaseFirestore.getInstance()
+        val listener = db.collection("matches")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("MatchRepository", "Listen failed.", error)
+                    return@addSnapshotListener
+                }
+
+                if (snapshot != null) {
+                    // Mapeamos los documentos por su propio ID (M01, M02, ...)
+                    val firebaseDocs = snapshot.documents.associateBy { it.id }
+                    // También mapeamos por matchCode (DENTRO de elements) para una búsqueda de respaldo
+                    val docsByCode = snapshot.documents.associateBy { it.getString("elements.matchCode") }
+                    
+                    Log.d("MatchRepository", "Fetched ${firebaseDocs.size} matches from Firestore.")
+
+                    val updatedMatches = allMatches.mapIndexed { index, staticMatch ->
+                        val expectedDocId = "M${(index + 1).toString().padStart(2, '0')}"
+                        
+                        // Estrategia: Buscar primero por el ID esperado (M01...) 
+                        // y verificar que su matchCode coincida con el ID estático (A1...)
+                        var doc = firebaseDocs[expectedDocId]
+                        
+                        if (doc != null) {
+                            val codeInDoc = doc.getString("elements.matchCode")
+                            if (codeInDoc != staticMatch.id) {
+                                Log.w("MatchRepository", "ID mismatch at $expectedDocId: expected ${staticMatch.id} but found $codeInDoc. Falling back to code search.")
+                                // Si no coinciden, buscamos por el campo matchCode dentro de elements
+                                doc = docsByCode[staticMatch.id]
+                            }
+                        } else {
+                            // Si no existe el documento MXX, intentamos por el campo matchCode
+                            doc = docsByCode[staticMatch.id]
+                        }
+
+                        if (doc != null) {
+                            val homeScore = doc.getLong("elements.homeScore")?.toInt()
+                            val awayScore = doc.getLong("elements.awayScore")?.toInt()
+                            val started = doc.getBoolean("elements.started") ?: false
+                            val finished = doc.getBoolean("elements.finished") ?: false
+                            val isActive = doc.getBoolean("elements.isActive") ?: false
+                            
+                            Log.d("MatchRepository", "DEBUG MATCH ${staticMatch.id}: docId=${doc.id}, started=$started, finished=$finished, isActive=$isActive, score=$homeScore-$awayScore")
+
+                            staticMatch.copy(
+                                realHomeScore = homeScore,
+                                realAwayScore = awayScore,
+                                started = started,
+                                finished = finished,
+                                isActive = isActive,
+                                firebaseId = doc.id
+                            )
+                        } else {
+                            staticMatch
+                        }
+                    }
+                    this.trySend(updatedMatches)
+                }
+            }
+        awaitClose { listener.remove() }
+    }.flowOn(Dispatchers.IO)
 }

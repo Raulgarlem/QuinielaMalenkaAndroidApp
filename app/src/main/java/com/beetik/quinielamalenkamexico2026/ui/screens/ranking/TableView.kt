@@ -1,6 +1,7 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens.ranking
 
 import android.content.res.Configuration
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -186,16 +187,49 @@ fun TableView(
         LazyColumn(modifier = Modifier.weight(1f)) {
             matches.forEach { match ->
                 item(key = match.id) {
-                    val actual = resultsMap[match.id]
+                    val actual = getEffectiveScore(match, resultsMap)
                     val isConfirmed = confirmedIds.contains(match.id)
-                    val isSimulated = actual != null && !isConfirmed
+                    val isLive = match.started && match.isActive
+                    val isSimulated = resultsMap.containsKey(match.id) && !isConfirmed
+                    
+                    // Log para depurar color en UI
+                    if (isLive) {
+                        Log.d("TableView", "Match ${match.id} IS LIVE. started=${match.started}, isActive=${match.isActive}")
+                    }
+
+                    val canEdit = !isConfirmed && !match.finished
+
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp).background(Color(0xFF121212).copy(alpha = 0.5f)), verticalAlignment = Alignment.CenterVertically) {
                         Row(modifier = Modifier.width(90.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                             Text(match.homeFlag, fontSize = 14.sp); Text(" vs ", color = Color.Gray, fontSize = 10.sp); Text(match.awayFlag, fontSize = 14.sp)
                         }
-                        Box(modifier = Modifier.width(60.dp).clickable(enabled = !isConfirmed) { onEditResult(match) }, contentAlignment = Alignment.Center) {
-                            Surface(color = when { isConfirmed -> Color(0xFF004D40); isSimulated -> Color(0xFFFF9800).copy(alpha = 0.2f); else -> Color(0xFF333333) }, shape = RoundedCornerShape(4.dp), border = if (isSimulated) BorderStroke(1.dp, Color(0xFFFF9800)) else null) {
-                                Text(text = actual?.let { "${it.home}-${it.away}" } ?: "-", color = when { isConfirmed -> Color(0xFF4CAF50); isSimulated -> Color(0xFFFF9800); else -> Color.White }, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        Box(modifier = Modifier.width(60.dp).clickable(enabled = canEdit) { onEditResult(match) }, contentAlignment = Alignment.Center) {
+                            Surface(
+                                color = when { 
+                                    isConfirmed -> Color(0xFF004D40)
+                                    isSimulated -> Color(0xFFFF9800).copy(alpha = 0.2f)
+                                    isLive -> Color(0xFFE91E63).copy(alpha = 0.2f)
+                                    else -> Color(0xFF333333) 
+                                }, 
+                                shape = RoundedCornerShape(4.dp), 
+                                border = when {
+                                    isSimulated -> BorderStroke(1.dp, Color(0xFFFF9800))
+                                    isLive -> BorderStroke(1.dp, Color(0xFFE91E63))
+                                    else -> null
+                                }
+                            ) {
+                                Text(
+                                    text = actual?.let { "${it.home}-${it.away}" } ?: "-", 
+                                    color = when { 
+                                        isConfirmed -> Color(0xFF4CAF50)
+                                        isSimulated -> Color(0xFFFF9800)
+                                        isLive -> Color(0xFFE91E63)
+                                        else -> Color.White 
+                                    }, 
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), 
+                                    fontWeight = FontWeight.Bold, 
+                                    fontSize = 11.sp
+                                )
                             }
                         }
 

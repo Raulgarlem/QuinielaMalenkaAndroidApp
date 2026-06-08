@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -42,6 +44,14 @@ fun GroupStandingsView(
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 // User prediction header
                 val predictedWinner = userGroupWinners[groupName] ?: "-"
+                
+                // Calcular estadísticas para saber quién va en primer lugar
+                val stats = remember(groupName, resultsMap) {
+                    calculateGroupStats(groupName, allMatches, resultsMap)
+                }
+                val currentLeader = stats.firstOrNull()?.name
+                val isFavoriteLeading = currentLeader != null && currentLeader == predictedWinner
+
                 Surface(
                     color = Gold.copy(alpha = 0.1f),
                     shape = MaterialTheme.shapes.small,
@@ -53,6 +63,15 @@ fun GroupStandingsView(
                     ) {
                         Text("Tu favorito: ", fontSize = 12.sp, color = Color.Gray)
                         Text(predictedWinner, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Gold)
+                        if (isFavoriteLeading) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.EmojiEvents,
+                                contentDescription = "Líder",
+                                tint = Gold,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
                 

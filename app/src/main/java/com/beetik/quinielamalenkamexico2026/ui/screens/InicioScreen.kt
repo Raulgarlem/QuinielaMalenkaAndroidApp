@@ -1,8 +1,10 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Notifications
@@ -13,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -38,10 +41,12 @@ import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.RankingViewModel
 @Composable
 fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val gson = remember { Gson() }
-    val allMatches = MatchRepository.allMatches
-    val groupCount = remember { allMatches.groupBy { it.group }.size }
+    val allMatches = rankingViewModel.allMatches
+    val groupCount = remember(allMatches) { allMatches.groupBy { it.group }.size }
     
     val officialParticipants = rankingViewModel.baseParticipants.filter { !it.id.startsWith("loaded_") }
     
@@ -62,40 +67,47 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
     // Timezone handling
     val mexicoCityZone = "America/Mexico_City"
     
-    // Find next match logic
-    val nextMatchData = remember(allMatches) {
+    // Find next matches logic (Live or upcoming)
+    val nextMatchesData = remember(allMatches) {
         val now = Calendar.getInstance().time
+        val mexicoCityZone = "America/Mexico_City"
         val sdfCDMX = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).apply {
             timeZone = TimeZone.getTimeZone(mexicoCityZone)
         }
         val sdfLocal = SimpleDateFormat("HH:mm", Locale.getDefault())
         val sdfDayMonth = SimpleDateFormat("d MMM", Locale.getDefault())
-        
-        val match = allMatches.find { m ->
-            try {
-                val matchDate = sdfCDMX.parse("${m.date} ${m.time}")
-                matchDate != null && matchDate.after(now)
-            } catch (_: Exception) {
-                false
-            }
-        } ?: allMatches.first()
 
-        // Convert match time to local for display
-        val matchDate = try {
-            sdfCDMX.parse("${match.date} ${match.time}")
-        } catch (_: Exception) {
-            null
+        // 1. Prioridad: Partidos en VIVO
+        val liveMatches = allMatches.filter { it.started && it.isActive }
+        
+        if (liveMatches.isNotEmpty()) {
+            return@remember liveMatches.map { m ->
+                val matchDate = try { sdfCDMX.parse("${m.date} ${m.time}") } catch (_: Exception) { null }
+                val localTime = matchDate?.let { sdfLocal.format(it) } ?: m.time
+                val localDate = matchDate?.let { sdfDayMonth.format(it) } ?: "11 Jun"
+                Triple(m, localTime, localDate)
+            }
         }
+
+        // 2. Si no hay en vivo, buscar el bloque de tiempo más próximo (no finalizado)
+        val upcomingMatches = allMatches.filter { !it.finished }
+            .sortedWith(compareBy({ it.date }, { it.time }))
         
-        val localTime = matchDate?.let { sdfLocal.format(it) } ?: match.time
-        val localDate = matchDate?.let { sdfDayMonth.format(it) } ?: "11 Jun"
-        
-        Triple(match, localTime, localDate)
+        if (upcomingMatches.isNotEmpty()) {
+            val firstUpcoming = upcomingMatches.first()
+            val simultaneousMatches = upcomingMatches.filter { it.date == firstUpcoming.date && it.time == firstUpcoming.time }
+            
+            return@remember simultaneousMatches.map { m ->
+                val matchDate = try { sdfCDMX.parse("${m.date} ${m.time}") } catch (_: Exception) { null }
+                val localTime = matchDate?.let { sdfLocal.format(it) } ?: m.time
+                val localDate = matchDate?.let { sdfDayMonth.format(it) } ?: "11 Jun"
+                Triple(m, localTime, localDate)
+            }
+        }
+
+        // 3. Si todo terminó, mostrar los últimos
+        listOf(Triple(allMatches.last(), allMatches.last().time, "Final"))
     }
-    
-    val nextMatch = nextMatchData.first
-    val displayTime = nextMatchData.second
-    val displayDate = nextMatchData.third
 
     // --- Lógica de Estadísticas y Ranking ---
     val statsInfo = remember(selectedQuiniela, officialParticipants, allMatches) {
@@ -274,14 +286,22 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
                 title = {
                     Text(
                         "QUINIELA MALENKA 2026",
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (isLandscape) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Gold
                     )
                 },
                 actions = {
-                    IconButton(onClick = { }) {
-                        Icon(Icons.Default.Notifications, contentDescription = "Notifications", tint = Gold)
+                    IconButton(
+                        onClick = { },
+                        modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
+                    ) {
+                        Icon(
+                            Icons.Default.Notifications, 
+                            contentDescription = "Notifications", 
+                            tint = Gold,
+                            modifier = if (isLandscape) Modifier.size(20.dp) else Modifier.size(24.dp)
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -289,7 +309,8 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
                     titleContentColor = Gold,
                     navigationIconContentColor = Gold,
                     actionIconContentColor = Gold
-                )
+                ),
+                windowInsets = if (isLandscape) WindowInsets(0) else TopAppBarDefaults.windowInsets
             )
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -297,20 +318,24 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(
+                    top = if (isLandscape) 40.dp else innerPadding.calculateTopPadding(),
+                    bottom = innerPadding.calculateBottomPadding(),
+                    start = 16.dp,
+                    end = 16.dp
+                ),
+            verticalArrangement = Arrangement.spacedBy(if (isLandscape) 8.dp else 16.dp)
         ) {
             item {
                 Column {
                     Text(
                         "Hola Raúl 👋",
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = if (isLandscape) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         if (daysUntilStart > 0) "Faltan $daysUntilStart días para el inicio" else "¡El mundial ha comenzado!",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -371,15 +396,16 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
 
             item {
                 Text(
-                    "PRÓXIMO PARTIDO",
+                    if (nextMatchesData.any { it.first.started && it.first.isActive }) "EN CURSO" else "PRÓXIMO PARTIDO",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                     color = Gold
                 )
             }
 
-            item {
-                MatchPreviewCard(nextMatch, displayDate, displayTime)
+            items(nextMatchesData.size) { index ->
+                val (match, time, date) = nextMatchesData[index]
+                MatchPreviewCard(match, date, time)
             }
 
             item {
@@ -469,6 +495,9 @@ fun SummaryCard(
 
 @Composable
 fun MatchPreviewCard(match: Match, displayDate: String, displayTime: String) {
+    val isLive = match.started && match.isActive
+    val isFinished = match.finished && !match.isActive
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -486,8 +515,19 @@ fun MatchPreviewCard(match: Match, displayDate: String, displayTime: String) {
             }
             
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp)) {
-                Text(displayDate, style = MaterialTheme.typography.labelSmall)
-                Text(displayTime, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (isLive) {
+                    Surface(color = Color(0xFFE91E63), shape = RoundedCornerShape(4.dp)) {
+                        Text("VIVO", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("${match.realHomeScore ?: 0} - ${match.realAwayScore ?: 0}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = Color(0xFFE91E63))
+                } else if (isFinished) {
+                    Text("FINAL", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    Text("${match.realHomeScore ?: 0} - ${match.realAwayScore ?: 0}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                } else {
+                    Text(displayDate, style = MaterialTheme.typography.labelSmall)
+                    Text(displayTime, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
             }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {

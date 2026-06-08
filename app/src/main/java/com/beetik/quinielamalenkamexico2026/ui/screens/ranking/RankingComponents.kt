@@ -76,7 +76,12 @@ fun ViewTabSmall(text: String, selected: Boolean, onClick: () -> Unit) {
 fun LegendItem(pts: Int, label: String) { Row(verticalAlignment = Alignment.CenterVertically) { PointTagSmall(pts); Text(" $label", color = Color.Gray, fontSize = 8.sp) } }
 
 @Composable
-fun PointTagSmall(points: Int) { Surface(color = getPointColor(points).copy(alpha = 0.2f), shape = RoundedCornerShape(3.dp)) { Text("+$points", color = getPointColor(points), modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp), fontSize = 8.sp, fontWeight = FontWeight.Bold) } }
+fun PointTagSmall(points: Int) {
+    val color = getPointColor(points)
+    Surface(color = color.copy(alpha = 0.2f), shape = RoundedCornerShape(3.dp)) {
+        Text("+$points", color = color, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+    }
+}
 
 @Composable
 fun PredictionCell(
@@ -104,7 +109,10 @@ fun PredictionCell(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text("${pred.first}-${pred.second}", color = Color.White, fontSize = 11.sp)
-        if (actual != null) { Spacer(modifier = Modifier.width(2.dp)); PointTagSmall(pts) }
+        if (actual != null) {
+            Spacer(modifier = Modifier.width(2.dp))
+            PointTagSmall(pts)
+        }
     }
 }
 

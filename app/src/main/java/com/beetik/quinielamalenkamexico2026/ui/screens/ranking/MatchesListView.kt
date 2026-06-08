@@ -3,6 +3,7 @@ package com.beetik.quinielamalenkamexico2026.ui.screens.ranking
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -88,17 +89,57 @@ private fun InternalMatchItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val isLive = match.started && match.isActive
+                val isFinished = match.finished && !match.isActive
+                
                 Text(
                     text = "${match.group} • $displayDate",
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = if (isLandscape) 9.sp else 11.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = when {
+                        isLive -> Color(0xFFE91E63)
+                        isFinished -> Color(0xFF4CAF50)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                 )
-                Text(
-                    text = "$displayTime hrs",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = if (isLandscape) 9.sp else 11.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold
-                )
+                
+                if (isLive) {
+                    Surface(
+                        color = Color(0xFFE91E63).copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(2.dp)
+                    ) {
+                        Text(
+                            text = "EN VIVO",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = if (isLandscape) 8.sp else 9.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            ),
+                            color = Color(0xFFE91E63),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                } else if (isFinished) {
+                    Surface(
+                        color = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(2.dp)
+                    ) {
+                        Text(
+                            text = "FINALIZADO",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = if (isLandscape) 8.sp else 9.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            ),
+                            color = Color(0xFF4CAF50).copy(alpha = 0.8f),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "$displayTime hrs",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = if (isLandscape) 9.sp else 11.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.height(if (isLandscape) 4.dp else 12.dp))
@@ -125,13 +166,33 @@ private fun InternalMatchItem(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(horizontal = 8.dp)
                 ) {
-                    Text(
-                        "VS",
-                        style = if (isLandscape) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Gold.copy(alpha = 0.7f)
-                    )
-                    val realScoreText = if (match.realHomeScore != null && match.realAwayScore != null) {
+                    val isLive = match.started && match.isActive
+                    val isFinished = match.finished && !match.isActive
+                    
+                    if (isLive || isFinished) {
+                        Surface(
+                            color = if (isLive) Color(0xFFE91E63).copy(alpha = 0.15f) else Color(0xFF4CAF50).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isLive) "EN VIVO" else "FINALIZADO",
+                                style = if (isLandscape) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (isLive) Color(0xFFE91E63) else Color(0xFF4CAF50),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "VS",
+                            style = if (isLandscape) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Gold.copy(alpha = 0.7f)
+                        )
+                    }
+                    
+                    val realScoreText = if (match.started && match.realHomeScore != null && match.realAwayScore != null) {
                         "${match.realHomeScore} - ${match.realAwayScore}"
                     } else {
                         "-"
@@ -139,7 +200,12 @@ private fun InternalMatchItem(
                     Text(
                         text = realScoreText,
                         style = if (isLandscape) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            isLive -> Color(0xFFE91E63)
+                            isFinished -> Color(0xFF4CAF50)
+                            else -> MaterialTheme.colorScheme.onSurface
+                        }
                     )
                 }
 
@@ -179,10 +245,14 @@ private fun InternalMatchItem(
                     } else {
                         "-  -"
                     }
+                    val isLive = match.started && match.isActive
+                    val isFinished = match.finished && !match.isActive
+                    
                     Text(
                         text = scoreText,
                         fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = if (isLandscape) 11.sp else 14.sp)
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = if (isLandscape) 11.sp else 14.sp),
+                        color = if (isLive || isFinished) Color(0xFF4CAF50).copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface
                     )
                 }
                 
@@ -192,24 +262,28 @@ private fun InternalMatchItem(
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = if (isLandscape) 9.sp else 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    
+                    // Lógica de puntos basada siempre en el marcador real de Firebase
                     val points = if (match.realHomeScore != null && match.realAwayScore != null && prediction != null) {
                         val hP = prediction.homeScore.toIntOrNull()
                         val aP = prediction.awayScore.toIntOrNull()
                         if (hP != null && aP != null) {
-                            when {
-                                hP == match.realHomeScore && aP == match.realAwayScore -> "3"
-                                (hP > aP && match.realHomeScore > match.realAwayScore) ||
-                                (hP < aP && match.realHomeScore < match.realAwayScore) ||
-                                (hP == aP && match.realHomeScore == match.realAwayScore) -> "1"
-                                else -> "0"
-                            }
+                            val actualScore = com.beetik.quinielamalenkamexico2026.model.MatchScore(match.realHomeScore, match.realAwayScore)
+                            calculatePoints(hP to aP, actualScore).toString()
                         } else "-"
                     } else "-"
+                    
+                    val isLive = match.started && match.isActive
+                    val isFinished = match.finished && !match.isActive
                     
                     Text(
                         text = points,
                         fontWeight = FontWeight.Bold,
-                        color = Gold,
+                        color = when {
+                            isLive -> Color(0xFFE91E63)
+                            isFinished -> Color(0xFF4CAF50)
+                            else -> Gold
+                        },
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = if (isLandscape) 11.sp else 14.sp)
                     )
                 }

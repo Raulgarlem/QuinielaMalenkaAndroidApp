@@ -44,6 +44,7 @@ fun GlobalRankingView(
     allMatches: List<Match>,
     resultsMap: Map<String, MatchScore>,
     onSimulateResult: (Match, Int, Int) -> Unit,
+    onClearSimulation: (Match) -> Unit,
     onMatchClick: (Match) -> Unit
 ) {
     var showTop5Mode by remember { mutableStateOf(true) }
@@ -54,26 +55,23 @@ fun GlobalRankingView(
     }
 
     // 1. Identify "featured" matches (Live or Next)
-    val matchesToShow = remember(allMatches, resultsMap.size) {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
-        val now = Date()
-        val calendar = Calendar.getInstance()
+    val matchesToShow = remember(allMatches) {
+        // 1. Prioridad: Partidos en VIVO
+        val liveMatches = allMatches.filter { it.started && it.isActive }
         
-        val liveMatches = allMatches.filter { match ->
-            try {
-                val matchDate = sdf.parse("${match.date} ${match.time}")
-                matchDate != null && now.after(matchDate) && {
-                    calendar.time = matchDate
-                    calendar.add(Calendar.HOUR_OF_DAY, 2)
-                    now.before(calendar.time)
-                }()
-            } catch (e: Exception) { false }
-        }
-
-        if (liveMatches.isNotEmpty()) liveMatches
-        else {
-            val nextMatch = allMatches.firstOrNull { it.realHomeScore == null }
-            if (nextMatch != null) listOf(nextMatch) else emptyList()
+        if (liveMatches.isNotEmpty()) {
+            liveMatches
+        } else {
+            // 2. Si no hay en vivo, buscar el bloque de tiempo más próximo (no finalizado)
+            val upcomingMatches = allMatches.filter { !it.finished }
+                .sortedWith(compareBy({ it.date }, { it.time }))
+            
+            if (upcomingMatches.isNotEmpty()) {
+                val firstUpcoming = upcomingMatches.first()
+                upcomingMatches.filter { it.date == firstUpcoming.date && it.time == firstUpcoming.time }
+            } else {
+                listOf(allMatches.last())
+            }
         }
     }
 
@@ -93,22 +91,50 @@ fun GlobalRankingView(
         val featuredIds = matchesToShow.map { it.id }.toSet()
 
         fun calculateScoped(useFeatured: Boolean): Triple<Map<String, Int>, Map<String, Int>, Map<String, Int>> {
-            val activeResults = resultsMap.filter { (id, _) -> 
-                timelineIds.contains(id) && (useFeatured || !featuredIds.contains(id))
-            }
-            
             val scores = officialParticipants.associate { p ->
                 var pts = 0
                 timelineMatches.forEach { match ->
-                    activeResults[match.id]?.let { actual ->
-                        pts += calculatePoints(p.predictions[match.id] ?: (0 to 0), actual)
+                    val isFeatured = featuredIds.contains(match.id)
+                    val actual = if (isFeatured) {
+                        if (useFeatured) getEffectiveScore(match, resultsMap) else null
+                    } else {
+                        getEffectiveScore(match, resultsMap)
+                    }
+                    
+                    actual?.let { score ->
+                        pts += calculatePoints(p.predictions[match.id] ?: (0 to 0), score)
                     }
                 }
+                
                 allMatches.groupBy { it.group }.forEach { (gName, gMatches) ->
                     val gMatchesInTimeline = gMatches.filter { timelineIds.contains(it.id) }
-                    if (gMatchesInTimeline.isNotEmpty() && gMatches.all { activeResults.containsKey(it.id) }) {
-                        val winner = getGroupWinner(gName, allMatches, activeResults)?.first
-                        if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
+                    if (gMatchesInTimeline.isNotEmpty()) {
+                        // Para puntos de grupo, verificamos si todos los partidos del grupo tienen marcador "efectivo"
+                        val allHaveResults = gMatches.all { m ->
+                            val isFeatured = featuredIds.contains(m.id)
+                            if (isFeatured) {
+                                if (useFeatured) getEffectiveScore(m, resultsMap) != null else false
+                            } else {
+                                getEffectiveScore(m, resultsMap) != null
+                            }
+                        }
+                        
+                        if (allHaveResults) {
+                            // Necesitamos filtrar resultsMap para getGroupWinner para que use la lógica scoped
+                            @Suppress("UNCHECKED_CAST")
+                            val scopedResults = gMatches.associate { m ->
+                                val isFeatured = featuredIds.contains(m.id)
+                                val score = if (isFeatured) {
+                                    if (useFeatured) getEffectiveScore(m, resultsMap) else null
+                                } else {
+                                    getEffectiveScore(m, resultsMap)
+                                }
+                                m.id to score
+                            }.filterValues { it != null } as Map<String, MatchScore>
+                            
+                            val winner = getGroupWinner(gName, allMatches, scopedResults)?.first
+                            if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
+                        }
                     }
                 }
                 p.id to pts
@@ -159,7 +185,8 @@ fun GlobalRankingView(
         items(matchesToShow) { match ->
             SimulatedMatchHeader(
                 match = match,
-                score = resultsMap[match.id],
+                resultsMap = resultsMap,
+                onClearSimulation = { onClearSimulation(match) },
                 onClick = { onMatchClick(match) }
             )
         }
@@ -294,8 +321,13 @@ fun GlobalRankingView(
 }
 
 @Composable
-fun SimulatedMatchHeader(match: Match, score: MatchScore?, onClick: () -> Unit) {
-    val isSimulated = score != null && (score.home != match.realHomeScore || score.away != match.realAwayScore)
+fun SimulatedMatchHeader(match: Match, resultsMap: Map<String, MatchScore>, onClearSimulation: () -> Unit, onClick: () -> Unit) {
+    val isSimulated = resultsMap.containsKey(match.id)
+    val isLive = match.started && match.isActive
+    val isFinished = match.finished
+    
+    val effectiveScore = getEffectiveScore(match, resultsMap)
+    
     val statusColor = if (isSimulated) Pending else Success
     val backgroundColor = if (isSimulated) Color(0xFF1A1408) else Color(0xFF081A08)
 
@@ -305,19 +337,43 @@ fun SimulatedMatchHeader(match: Match, score: MatchScore?, onClick: () -> Unit) 
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, statusColor.copy(alpha = 0.4f))
     ) {
-        Column(modifier = Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(if (isSimulated) "RESULTADO SIMULADO" else "RESULTADO REAL", color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
-                Text(match.homeFlag, fontSize = 26.sp)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(match.homeTeam.uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${score?.home ?: match.realHomeScore ?: "-"}", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, modifier = Modifier.padding(horizontal = 10.dp))
-                Text("-", color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Text("${score?.away ?: match.realAwayScore ?: "-"}", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, modifier = Modifier.padding(horizontal = 10.dp))
-                Text(match.awayTeam.uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Start, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(match.awayFlag, fontSize = 26.sp)
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Botón para borrar simulación (solo si existe)
+            if (isSimulated) {
+                TextButton(
+                    onClick = { onClearSimulation() },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = if (isLive) "VOLVER A EN VIVO" else "BORRAR SIMULACIÓN",
+                        color = Gold,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                val label = when {
+                    isSimulated -> "RESULTADO SIMULADO"
+                    isFinished -> "RESULTADO FINAL"
+                    isLive -> "EN CURSO (VIVO)"
+                    else -> "PRÓXIMO PARTIDO"
+                }
+                Text(label, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+                    Text(match.homeFlag, fontSize = 26.sp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(match.homeTeam.uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${effectiveScore?.home ?: "-"}", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, modifier = Modifier.padding(horizontal = 10.dp))
+                    Text("-", color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text("${effectiveScore?.away ?: "-"}", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, modifier = Modifier.padding(horizontal = 10.dp))
+                    Text(match.awayTeam.uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Start, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(match.awayFlag, fontSize = 26.sp)
+                }
             }
         }
     }

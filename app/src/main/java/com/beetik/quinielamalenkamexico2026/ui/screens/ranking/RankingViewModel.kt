@@ -1,6 +1,7 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens.ranking
 
 import android.app.Application
+import android.util.Log
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -9,8 +10,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.beetik.quinielamalenkamexico2026.data.MatchRepository
 import com.beetik.quinielamalenkamexico2026.data.local.database.QuinielaDatabase
 import com.beetik.quinielamalenkamexico2026.data.local.entity.RankingConfigEntity
+import com.beetik.quinielamalenkamexico2026.model.Match
 import com.beetik.quinielamalenkamexico2026.model.MatchScore
 import com.beetik.quinielamalenkamexico2026.model.Participant
 import com.beetik.quinielamalenkamexico2026.model.PinCategory
@@ -19,7 +22,8 @@ import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -59,6 +63,11 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
     var isLiveRanking by mutableStateOf(false)
     var comparisonParticipantId by mutableStateOf<String?>(null)
 
+    // Match state from Firestore
+    var allMatches by mutableStateOf<List<Match>>(MatchRepository.allMatches)
+        private set
+    val confirmedIds = mutableStateListOf<String>()
+
     init {
         // PRE-INITIALIZE state to avoid NoSuchElementException in derivedStateOf
         baseParticipants.addAll(officialParticipants)
@@ -70,6 +79,40 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
         }
         loadAllConfigs()
         syncWithDatabase()
+        observeMatches()
+    }
+
+    private fun observeMatches() {
+        viewModelScope.launch {
+            MatchRepository.getMatchesFlow().collectLatest { updatedMatches ->
+                Log.d("RankingViewModel", "Received ${updatedMatches.size} updated matches from Repository")
+                allMatches = updatedMatches
+                
+                updatedMatches.forEach { match ->
+                    val isLive = match.started && match.isActive
+                    val isFinished = match.finished && !match.isActive
+                    
+                    if (isLive || isFinished) {
+                        if (match.realHomeScore != null && match.realAwayScore != null) {
+                            val realScore = MatchScore(match.realHomeScore, match.realAwayScore)
+                            
+                            // Ya no sobreescribimos resultsMap automáticamente para partidos en vivo
+                            // solo para partidos FINALIZADOS para "confirmarlos" si no estaban
+                            if (isFinished && resultsMap[match.id] != realScore) {
+                                Log.d("RankingViewModel", "Confirming finished match ${match.id}: ${realScore.home}-${realScore.away}")
+                                resultsMap[match.id] = realScore
+                            }
+
+                            if (isFinished && !confirmedIds.contains(match.id)) {
+                                confirmedIds.add(match.id)
+                            } else if (isLive && confirmedIds.contains(match.id)) {
+                                confirmedIds.remove(match.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun syncWithDatabase() {

@@ -12,7 +12,8 @@ room = "2.7.0-alpha11"
 ksp = "2.1.0-1.0.29"
 gson = "2.10.1"
 navigationCompose = "2.8.7"
-kotlinxCoroutines = "1.8.1"
+kotlinxCoroutines = "1.10.1"
+googlePlayServicesCoroutines = "1.10.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +36,8 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "googlePlayServicesCoroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

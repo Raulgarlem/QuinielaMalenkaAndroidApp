@@ -10,7 +10,11 @@ data class Match(
     val awayTeam: String,
     val awayFlag: String,
     val realHomeScore: Int? = null,
-    val realAwayScore: Int? = null
+    val realAwayScore: Int? = null,
+    val started: Boolean = false,
+    val finished: Boolean = false,
+    val isActive: Boolean = false,
+    val firebaseId: String? = null
 )
 
 data class MatchResult(

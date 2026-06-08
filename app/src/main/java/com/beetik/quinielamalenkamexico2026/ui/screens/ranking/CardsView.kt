@@ -74,6 +74,7 @@ fun CardsView(
     showAddButton: Boolean,
     isLiveRanking: Boolean,
     onSimularMatch: (Match) -> Unit,
+    onClearSimulation: (Match) -> Unit,
     onDateSelected: (String) -> Unit,
     onToggleDayPoints: (Boolean) -> Unit,
     onAddParticipant: () -> Unit,
@@ -110,13 +111,24 @@ fun CardsView(
             items(availableDates) { date ->
                 val isSelected = date == selectedDate
                 val hasSimulation = datesWithSimulations.contains(date)
+                
+                // Nuevos estados para el selector
+                val matchesOfDate = remember(allMatches, date) { allMatches.filter { it.date == date } }
+                val hasLive = remember(matchesOfDate) { matchesOfDate.any { it.started && it.isActive } }
+                val allFinished = remember(matchesOfDate) { matchesOfDate.isNotEmpty() && matchesOfDate.all { it.finished && !it.isActive } }
+
                 Surface(
                     onClick = { onDateSelected(date) },
                     shape = RoundedCornerShape(16.dp),
-                    color = if (isSelected) Gold else Color(0xFF1E1E1E),
+                    color = when {
+                        isSelected -> Gold
+                        allFinished -> Color(0xFF004D40) // Fondo verde si todo terminó
+                        else -> Color(0xFF1E1E1E)
+                    },
                     border = when {
                         isSelected -> null
-                        hasSimulation -> BorderStroke(2.dp, Color(0xFFFF9800))
+                        hasLive -> BorderStroke(2.dp, Color(0xFFE91E63)) // Borde rosa si hay vivo
+                        hasSimulation -> BorderStroke(2.dp, Color(0xFFFF9800)) // Borde naranja si hay sim
                         else -> BorderStroke(1.dp, Color.Gray.copy(alpha = 0.3f))
                     }
                 ) {
@@ -140,9 +152,10 @@ fun CardsView(
             items(dayMatches, key = { it.id }) { match ->
                 MatchCard(
                     match = match,
-                    actual = resultsMap[match.id],
+                    actualInMap = resultsMap[match.id],
                     isConfirmed = confirmedIds.contains(match.id),
-                    onSimularMatch = { onSimularMatch(match) }
+                    onSimularMatch = { onSimularMatch(match) },
+                    onClearSimulation = { onClearSimulation(match) }
                 )
             }
 
@@ -317,14 +330,23 @@ fun CardsView(
 @Composable
 fun MatchCard(
     match: Match,
-    actual: MatchScore?,
+    actualInMap: MatchScore?,
     isConfirmed: Boolean,
-    onSimularMatch: () -> Unit
+    onSimularMatch: () -> Unit,
+    onClearSimulation: () -> Unit
 ) {
-    val isSimulated = actual != null && !isConfirmed
+    val isLive = match.started && match.isActive
+    val isFinished = match.finished
+    val isSimulated = actualInMap != null && !isConfirmed
+    
+    val effectiveScore = actualInMap ?: if (match.started) match.realHomeScore?.let { h -> match.realAwayScore?.let { a -> MatchScore(h, a) } } else null
+
+    val canSimulate = !isConfirmed && !isFinished
+
     val scoreColor = when {
         isConfirmed -> Color(0xFF4CAF50)
         isSimulated -> Color(0xFFFF9800)
+        isLive -> Color(0xFFE91E63)
         else -> Color.White
     }
 
@@ -334,6 +356,7 @@ fun MatchCard(
         border = when {
             isConfirmed -> BorderStroke(2.dp, Color(0xFF4CAF50))
             isSimulated -> BorderStroke(2.dp, Color(0xFFFF9800))
+            isLive -> BorderStroke(2.dp, Color(0xFFE91E63))
             else -> null
         }
     ) {
@@ -342,7 +365,14 @@ fun MatchCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Text(match.group.uppercase(), color = Gold, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(match.group.uppercase(), color = Gold, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                if (isLive) {
+                    Surface(color = Color(0xFFE91E63), shape = RoundedCornerShape(2.dp)) {
+                        Text("VIVO", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp))
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -353,24 +383,52 @@ fun MatchCard(
             
             Spacer(modifier = Modifier.height(6.dp))
             
-            Text(if (actual != null) "Resultado" else "Programado", color = Color.Gray, fontSize = 8.sp)
-            Text(actual?.let { "${it.home}-${it.away}" } ?: "-", color = scoreColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                text = when {
+                    isConfirmed -> "Finalizado"
+                    isSimulated -> "Simulado"
+                    isLive -> "En Vivo"
+                    else -> "Programado"
+                }, 
+                color = Color.Gray, 
+                fontSize = 8.sp
+            )
+            Text(effectiveScore?.let { "${it.home}-${it.away}" } ?: "-", color = scoreColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
 
             Spacer(modifier = Modifier.height(2.dp))
             Text("${match.time} hrs", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
 
             Spacer(modifier = Modifier.weight(1f))
+            
+            if (isSimulated) {
+                TextButton(
+                    onClick = onClearSimulation,
+                    modifier = Modifier.fillMaxWidth().height(28.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(
+                        text = if (isLive) "VOLVER A VIVO" else "BORRAR SIM",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Gold
+                    )
+                }
+            }
+
             Button(
                 onClick = onSimularMatch, 
+                enabled = canSimulate,
                 modifier = Modifier.fillMaxWidth().height(28.dp),
                 contentPadding = PaddingValues(0.dp),
                 shape = RoundedCornerShape(4.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFFF9800),
-                    contentColor = Color.Black
+                    containerColor = if (isConfirmed || isFinished) Color.Gray else Color(0xFFFF9800),
+                    contentColor = Color.Black,
+                    disabledContainerColor = Color(0xFF333333),
+                    disabledContentColor = Color.Gray
                 )
             ) { 
-                Text("Simular", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold) 
+                Text(if (canSimulate) "Simular" else "Finalizado", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
     }
@@ -549,18 +607,16 @@ fun ParticipantFullCard(
                                 tapJob?.cancel()
                                 tapJob = scope.launch {
                                     delay(220)
-                                    if (p.isUser || isLoaded || isPinned) {
+                                    if (tapCount == 1 && isPinned) {
+                                        pinnedParticipantCategories.remove(p.id)
+                                        pinnedParticipantIds.remove(p.id)
+                                    } else if (tapCount == 1 && (p.isUser || isLoaded)) {
                                         onToggleComparison(p.id)
                                     } else {
                                         when (tapCount) {
                                             1 -> {
-                                                if (isPinned) {
-                                                    pinnedParticipantCategories.remove(p.id)
-                                                    pinnedParticipantIds.remove(p.id)
-                                                } else {
-                                                    pinnedParticipantCategories[p.id] = 1
-                                                    pinnedParticipantIds.add(p.id)
-                                                }
+                                                pinnedParticipantCategories[p.id] = 1
+                                                pinnedParticipantIds.add(p.id)
                                             }
                                             2 -> { pinnedParticipantCategories[p.id] = 2; if (!pinnedParticipantIds.contains(p.id)) pinnedParticipantIds.add(p.id) }
                                             3 -> { pinnedParticipantCategories[p.id] = 3; if (!pinnedParticipantIds.contains(p.id)) pinnedParticipantIds.add(p.id) }
@@ -689,7 +745,12 @@ fun ParticipantFullCard(
                 dayMatches.forEach { match ->
                     val pred = p.predictions[match.id]
                     val actual = resultsMap[match.id]
-                    val pts = if (actual != null && pred != null) calculatePoints(pred, actual) else null
+                    val isLive = match.started && match.isActive
+                    
+                    val effectiveActual = actual ?: if (isLive) match.realHomeScore?.let { h -> match.realAwayScore?.let { a -> MatchScore(h, a) } } else null
+                    
+                    val pts = if (effectiveActual != null && pred != null) calculatePoints(pred, effectiveActual) else null
+                    val pointColor = if (pts != null) getPointColor(pts) else Color.Gray
                     
                     Row(
                         modifier = Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp),
@@ -700,13 +761,13 @@ fun ParticipantFullCard(
                         
                         if (pts != null) {
                             Surface(
-                                color = getPointColor(pts).copy(alpha = 0.2f),
+                                color = pointColor.copy(alpha = 0.2f),
                                 shape = RoundedCornerShape(3.dp),
                                 modifier = Modifier.padding(horizontal = 2.dp)
                             ) {
                                 Text(
                                     text = "+$pts",
-                                    color = getPointColor(pts),
+                                    color = pointColor,
                                     fontSize = 8.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)

@@ -80,11 +80,11 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
         }
     }
 
-    val allMatches = remember { 
-        MatchRepository.allMatches.sortedWith(compareBy({ it.date }, { it.time })) 
+    val allMatches = remember(viewModel.allMatches) { 
+        viewModel.allMatches.sortedWith(compareBy({ it.date }, { it.time })) 
     }
     
-    val confirmedIds = remember { mutableStateListOf<String>() }
+    val confirmedIds = viewModel.confirmedIds
     var matchToEdit by remember { mutableStateOf<Match?>(null) }
 
     val context = LocalContext.current
@@ -106,14 +106,14 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
             val scores = baseParticipants.associate { p ->
                 var pts = 0
                 allMatches.forEach { match ->
-                    resultsMap[match.id]?.let { actual ->
+                    getEffectiveScore(match, resultsMap)?.let { actual ->
                         val pred = p.predictions[match.id] ?: (0 to 0)
                         pts += calculatePoints(pred, actual)
                     }
                 }
                 matchesByGroup.forEach { (gName, gMatches) ->
-                    val hasResults = gMatches.any { it.id in resultsMap }
-                    val isFinished = gMatches.all { it.id in resultsMap }
+                    val hasResults = gMatches.any { getEffectiveScore(it, resultsMap) != null }
+                    val isFinished = gMatches.all { getEffectiveScore(it, resultsMap) != null }
                     if (hasResults && (isFinished || isLiveRanking)) {
                         val winner = getGroupWinner(gName, allMatches, resultsMap)?.first
                         if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
@@ -218,14 +218,14 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
             val runningScores = baseParticipants.associate { it.id to 0 }.toMutableMap()
             
             allMatches.forEach { match ->
-                val result = resultsMap[match.id]
+                val result = getEffectiveScore(match, resultsMap)
                 if (result != null) {
                     baseParticipants.forEach { p ->
                         val pred = p.predictions[match.id] ?: (0 to 0)
                         runningScores[p.id] = (runningScores[p.id] ?: 0) + calculatePoints(pred, result)
                     }
                     val groupMatches = allMatches.filter { it.group == match.group }
-                    if (groupMatches.last().id == match.id && groupMatches.all { it.id in resultsMap }) {
+                    if (groupMatches.last().id == match.id && groupMatches.all { getEffectiveScore(it, resultsMap) != null }) {
                         val winner = getGroupWinner(match.group, allMatches, resultsMap)?.first
                         if (winner != null) {
                             baseParticipants.forEach { p ->
@@ -612,6 +612,10 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
                     showAddButton = showAddButton, 
                     isLiveRanking = isLiveRanking, 
                     onSimularMatch = { matchToEdit = it },
+                    onClearSimulation = { match ->
+                        resultsMap.remove(match.id)
+                        viewModel.saveCurrentState()
+                    },
                     onDateSelected = { selectedCardsDate = it },
                     onToggleDayPoints = { showOnlyDayPoints = it },
                     onAddParticipant = { showLoadQuinielaDialog = true }, 
@@ -630,6 +634,10 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
                         resultsMap = resultsMap,
                         onSimulateResult = { match, h, a ->
                             resultsMap[match.id] = com.beetik.quinielamalenkamexico2026.model.MatchScore(h, a)
+                            viewModel.saveCurrentState()
+                        },
+                        onClearSimulation = { match ->
+                            resultsMap.remove(match.id)
                             viewModel.saveCurrentState()
                         },
                         onMatchClick = { matchToEdit = it }

@@ -35,6 +35,9 @@ fun MatchCard(
     isError: Boolean = false
 ) {
     val focusManager = LocalFocusManager.current
+    val isLive = match.started && match.isActive
+    val isFinished = match.finished && !match.isActive
+    val isReadOnly = isLive || isFinished
     
     val formattedDate = remember(match.date) {
         val parts = match.date.split("-")
@@ -108,6 +111,7 @@ fun MatchCard(
                     ScoreInput(
                         value = homeScore,
                         onValueChange = onHomeScoreChange,
+                        enabled = !isReadOnly,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Number,
                             imeAction = ImeAction.Next
@@ -126,6 +130,7 @@ fun MatchCard(
                     ScoreInput(
                         value = awayScore,
                         onValueChange = onAwayScoreChange,
+                        enabled = !isReadOnly,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Number,
                             imeAction = ImeAction.Next
@@ -149,6 +154,40 @@ fun MatchCard(
                     modifier = Modifier.weight(1f),
                     alignEnd = true
                 )
+            }
+
+            if (isReadOnly) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val statusText = if (isLive) "VIVO" else "FINALIZADO"
+                    val statusColor = if (isLive) Color(0xFFE91E63) else Color.Gray
+                    
+                    Surface(
+                        color = statusColor.copy(alpha = 0.1f),
+                        shape = MaterialTheme.shapes.extraSmall,
+                        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = statusText,
+                            color = statusColor,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
+                    Text(
+                        text = "Real: ${match.realHomeScore ?: 0} - ${match.realAwayScore ?: 0}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -191,6 +230,7 @@ fun TeamDisplay(
 fun ScoreInput(
     value: String,
     onValueChange: (String) -> Unit,
+    enabled: Boolean = true,
     keyboardOptions: KeyboardOptions = KeyboardOptions(
         keyboardType = KeyboardType.Number,
         imeAction = ImeAction.Next
@@ -217,6 +257,7 @@ fun ScoreInput(
                 }
             }
         },
+        enabled = enabled,
         modifier = Modifier
             .width(45.dp)
             .height(45.dp)
