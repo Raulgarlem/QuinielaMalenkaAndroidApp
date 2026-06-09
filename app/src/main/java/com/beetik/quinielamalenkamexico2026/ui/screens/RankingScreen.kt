@@ -38,6 +38,7 @@ import com.beetik.quinielamalenkamexico2026.model.MatchScore
 import com.beetik.quinielamalenkamexico2026.model.Participant
 import com.beetik.quinielamalenkamexico2026.model.PinCategory
 import com.beetik.quinielamalenkamexico2026.model.RankingConfig
+import com.beetik.quinielamalenkamexico2026.ui.UserViewModel
 import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.*
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 import java.util.UUID
@@ -48,9 +49,17 @@ import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
+fun RankingScreen(
+    viewModel: RankingViewModel = viewModel(),
+    userViewModel: UserViewModel = viewModel()
+) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    
+    // Trigger reload when access code changes
+    LaunchedEffect(userViewModel.accessCode, userViewModel.isLoggedIn) {
+        viewModel.loadOfficialParticipants(userViewModel.accessCode)
+    }
     
     // UI state that needs persistence across rotation
     var selectedView by rememberSaveable { mutableStateOf("Tabla") }
@@ -266,8 +275,8 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
     val filteredParticipants by remember(selectedFilter, searchQuery) {
         derivedStateOf {
             val scores = currentScores
-            val user = baseParticipants.first { it.isUser }
-            val loaded = baseParticipants.filter { it.id.startsWith("loaded_") }
+            val users = baseParticipants.filter { it.isUser }
+            val loaded = baseParticipants.filter { it.id.startsWith("loaded_") && !it.isUser }
             val others = baseParticipants.filter { !it.isUser && !it.id.startsWith("loaded_") }
             
             // Re-order based on pins
@@ -279,24 +288,24 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
                 .sortedBy { pinnedParticipantIds.indexOf(it.id) }
             val remainingLoaded = loaded.filter { it.id !in pinnedParticipantCategories }
 
-            // Base order: [Loaded] [Mi Quiniela] [Others]
-            // But within groups, pins go first and follow pinnedParticipantIds order
+            // Base order: [Loaded] [Mis Quinielas] [Others]
             val allInTodasOrder = (pinnedLoaded + remainingLoaded + 
-                                   listOf(user) + 
+                                   users + 
                                    pinnedOthers + remainingOthers).distinctBy { it.id }
 
             val list = when {
                 selectedFilter == "Añadidas" -> {
-                    loaded.sortedWith(compareByDescending<Participant> { currentScores[it.id] ?: 0 }.thenBy { it.quinielaName })
+                    val addedOnly = baseParticipants.filter { it.id.startsWith("loaded_") }
+                    addedOnly.sortedWith(compareByDescending<Participant> { currentScores[it.id] ?: 0 }.thenBy { it.quinielaName })
                 }
                 selectedFilter != "Todas" && selectedFilter != "Top 10" && selectedFilter != "Top 5" -> {
                     val catId = pinnedCategories.values.find { it.name == selectedFilter }?.id
                     if (catId != null) {
-                        val pinnedInCat = (others + loaded + listOf(user))
+                        val pinnedInCat = baseParticipants
                             .filter { pinnedParticipantCategories[it.id] == catId }
                             .sortedBy { pinnedParticipantIds.indexOf(it.id) }
                         (loaded.filter { it.id !in pinnedParticipantCategories } + 
-                         listOf(user).filter { it.id !in pinnedParticipantCategories } + 
+                         users.filter { it.id !in pinnedParticipantCategories } + 
                          pinnedInCat).distinctBy { it.id }
                     } else { allInTodasOrder }
                 }
@@ -304,7 +313,7 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
                     val n = if (selectedFilter == "Top 5") 5 else 10
                     val othersPool = baseParticipants.filter { !it.isUser && !it.id.startsWith("loaded_") }
                     val sortedOthers = othersPool.sortedWith(compareByDescending<Participant> { currentScores[it.id] ?: 0 }.thenBy { allInTodasOrder.indexOf(it) })
-                    (loaded + listOf(user) + sortedOthers.take(n)).distinctBy { it.id }
+                    (users + loaded + sortedOthers.take(n)).distinctBy { it.id }
                 }
                 else -> allInTodasOrder
             }
@@ -490,7 +499,7 @@ fun RankingScreen(viewModel: RankingViewModel = viewModel()) {
             savedQuinielas = savedQuinielas,
             onDismiss = { showLoadQuinielaDialog = false },
             onQuinielaSelected = { entity ->
-                val newParticipant = entity.toParticipant()
+                val newParticipant = entity.toParticipant(userViewModel.email)
                 if (baseParticipants.none { it.id == newParticipant.id }) {
                     baseParticipants.add(0, newParticipant)
                     viewModel.saveCurrentState()

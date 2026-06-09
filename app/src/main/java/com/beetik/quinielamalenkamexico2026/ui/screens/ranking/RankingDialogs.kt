@@ -134,7 +134,7 @@ fun LoadQuinielaDialog(
     )
 }
 
-fun QuinielaEntity.toParticipant(): Participant {
+fun QuinielaEntity.toParticipant(currentUserEmail: String = ""): Participant {
     val gson = Gson()
     val predictionsType = object : TypeToken<Map<String, MatchResult>>() {}.type
     val predictionsMap: Map<String, MatchResult> = gson.fromJson(this.resultsJson, predictionsType) ?: emptyMap()
@@ -150,7 +150,7 @@ fun QuinielaEntity.toParticipant(): Participant {
         id = "loaded_${this.id}",
         quinielaName = this.quinielaName,
         ownerName = this.propietarioName,
-        isUser = false,
+        isUser = this.userEmail.isNotBlank() && this.userEmail.lowercase().trim() == currentUserEmail.lowercase().trim(),
         predictions = predictions,
         groupWinnerPredictions = winners,
         prevPosition = 0

@@ -19,37 +19,32 @@ import com.beetik.quinielamalenkamexico2026.model.Participant
 import com.beetik.quinielamalenkamexico2026.model.PinCategory
 import com.beetik.quinielamalenkamexico2026.model.RankingConfig
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
 class RankingViewModel(application: Application) : AndroidViewModel(application) {
     private val database = QuinielaDatabase.getDatabase(application)
     private val configDao = database.rankingConfigDao()
     private val gson = Gson()
+    private val firestore = FirebaseFirestore.getInstance()
+    private val prefs = application.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
 
     private val defaultCategoryNames = mapOf(
         1 to "Amigos", 2 to "Familia", 3 to "Trabajo", 4 to "Némesis", 5 to "Afectados por la Mayición"
     )
 
+    /*
     private val officialParticipants = listOf(
         Participant("1", "Mi Quiniela", "Raúl (Tú)", true, mapOf("A1" to (3 to 1), "A2" to (1 to 0), "C1" to (3 to 0)), mapOf("Grupo A" to "México", "Grupo C" to "Brasil"), 5),
-        Participant("2", "La Favorita", "Tania", false, mapOf("A1" to (2 to 1), "A2" to (1 to 1), "C1" to (2 to 0)), mapOf("Grupo A" to "México", "Grupo C" to "Brasil"), 1),
-        Participant("3", "El Crack", "Roberto", false, mapOf("A1" to (1 to 1), "A2" to (2 to 1), "C1" to (1 to 1)), mapOf("Grupo A" to "Sudáfrica"), 9),
-        Participant("4", "Gol Gana", "Luis", false, mapOf("A1" to (2 to 0), "A2" to (1 to 1), "C1" to (4 to 0)), mapOf("Grupo A" to "México", "Grupo C" to "Brasil"), 2),
-        Participant("5", "Futbolera", "Karla", false, mapOf("A1" to (2 to 1), "A2" to (1 to 1), "C1" to (3 to 0)), mapOf("Grupo A" to "Corea del Sur", "Grupo C" to "Brasil"), 4),
-        Participant("6", "El Experto", "Miguel", false, mapOf("A1" to (0 to 0), "A2" to (1 to 2), "C1" to (2 to 0)), mapOf("Grupo C" to "Brasil"), 6),
-        Participant("7", "La Suertuda", "Ana", false, mapOf("A1" to (1 to 2), "A2" to (0 to 1), "C1" to (1 to 0)), mapOf("Grupo A" to "República Checa"), 7),
-        Participant("8", "Invicto", "Diego", false, mapOf("A1" to (2 to 1), "A2" to (1 to 3), "C1" to (3 to 1)), mapOf("Grupo A" to "México", "Grupo C" to "Brasil"), 2),
-        Participant("9", "El Mago", "Carlos", false, mapOf("A1" to (1 to 1), "A2" to (2 to 2), "C1" to (0 to 0)), emptyMap(), 10),
-        Participant("10", "Estrella", "Sofía", false, emptyMap(), emptyMap(), 5),
-        Participant("11", "Campeón", "Javier", false, emptyMap(), emptyMap(), 8),
-        Participant("12", "Líder", "Elena", false, emptyMap(), emptyMap(), 9)
+        ...
     )
+    */
 
     var savedConfigs = mutableStateListOf<RankingConfig>()
     var currentConfigId by mutableStateOf("default")
@@ -57,6 +52,7 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
     // UI state
     var resultsMap = mutableStateMapOf<String, MatchScore>()
     val baseParticipants = mutableStateListOf<Participant>()
+    val officialParticipants = mutableStateListOf<Participant>()
     val pinnedParticipantCategories = mutableStateMapOf<String, Int>()
     val pinnedParticipantIds = mutableStateListOf<String>()
     var pinnedCategories = mutableStateMapOf<Int, PinCategory>()
@@ -69,8 +65,7 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
     val confirmedIds = mutableStateListOf<String>()
 
     init {
-        // PRE-INITIALIZE state to avoid NoSuchElementException in derivedStateOf
-        baseParticipants.addAll(officialParticipants)
+        // PRE-INITIALIZE state
         defaultCategoryNames.forEach { (id, name) ->
             val color = when(id) {
                 1 -> Gold; 2 -> Color(0xFF2196F3); 3 -> Color(0xFF9C27B0); 4 -> Color(0xFF4CAF50); else -> Color(0xFFFF4081)
@@ -80,6 +75,71 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
         loadAllConfigs()
         syncWithDatabase()
         observeMatches()
+        
+        // Initial load of official participants based on current session
+        val currentCode = prefs.getString("access_code", "") ?: ""
+        loadOfficialParticipants(currentCode)
+    }
+
+    fun loadOfficialParticipants(accessCode: String) {
+        if (accessCode.isBlank()) {
+            officialParticipants.clear()
+            updateBaseParticipants()
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val snapshot = firestore.collection("quinielas")
+                    .whereEqualTo("quinielaCode", accessCode.trim())
+                    .whereEqualTo("paymentReceived", true)
+                    .get().await()
+
+                val newOfficial = snapshot.documents.map { doc ->
+                    val qName = doc.getString("quinielaName") ?: "Sin nombre"
+                    val oName = doc.getString("propietarioName") ?: "Anónimo"
+                    val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
+                    val winnersRaw = doc.get("groupWinners") as? Map<String, String>
+                    
+                    val predictions = resultsRaw?.mapValues { (_, v) ->
+                        (v["homeScore"]?.toIntOrNull() ?: 0) to (v["awayScore"]?.toIntOrNull() ?: 0)
+                    } ?: emptyMap()
+
+                    Participant(
+                        id = doc.id,
+                        quinielaName = qName,
+                        ownerName = oName,
+                        isUser = doc.getString("userEmail") == prefs.getString("user_email", ""),
+                        predictions = predictions,
+                        groupWinnerPredictions = winnersRaw ?: emptyMap(),
+                        prevPosition = 1 // Logic for prev position could be added if needed
+                    )
+                }
+
+                launch(Dispatchers.Main) {
+                    officialParticipants.clear()
+                    officialParticipants.addAll(newOfficial)
+                    updateBaseParticipants()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun updateBaseParticipants() {
+        // Find added participants from current state (only those starting with loaded_)
+        val added = baseParticipants.filter { it.id.startsWith("loaded_") }
+        baseParticipants.clear()
+        baseParticipants.addAll(officialParticipants)
+        
+        // Add "added" participants ensuring no ID duplicates with official ones
+        val officialIds = officialParticipants.map { it.id }.toSet()
+        added.forEach { lp ->
+            if (lp.id !in officialIds) {
+                baseParticipants.add(lp)
+            }
+        }
     }
 
     private fun observeMatches() {

@@ -170,7 +170,7 @@ fun MainScreen() {
                 composable(Screen.Inicio.route) { InicioScreen(userViewModel = userViewModel) }
                 composable(Screen.Quinielas.route) { QuinielasScreen(navController, userViewModel = userViewModel) }
                 composable(Screen.Partidos.route) { PartidosScreen() }
-                composable(Screen.Ranking.route) { RankingScreen() }
+                composable(Screen.Ranking.route) { RankingScreen(userViewModel = userViewModel) }
                 composable(Screen.Perfil.route) { PerfilScreen(userViewModel = userViewModel) }
                 composable(Screen.FillQuiniela.route) { backStackEntry ->
                     val quinielaId = backStackEntry.arguments?.getString("quinielaId")?.toIntOrNull() ?: -1
