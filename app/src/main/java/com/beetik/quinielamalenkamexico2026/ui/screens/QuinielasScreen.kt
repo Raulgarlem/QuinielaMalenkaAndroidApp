@@ -14,11 +14,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,11 +32,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.beetik.quinielamalenkamexico2026.data.MatchRepository
 import com.beetik.quinielamalenkamexico2026.data.local.database.QuinielaDatabase
 import com.beetik.quinielamalenkamexico2026.data.local.entity.QuinielaEntity
 import com.beetik.quinielamalenkamexico2026.model.MatchResult
+import com.beetik.quinielamalenkamexico2026.ui.UserViewModel
 import com.beetik.quinielamalenkamexico2026.ui.navigation.Screen
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 import com.google.firebase.firestore.FieldPath
@@ -47,7 +51,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun QuinielasScreen(navController: NavController) {
+fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel = viewModel()) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -59,7 +63,9 @@ fun QuinielasScreen(navController: NavController) {
     
     // Using a simple state and LaunchedEffect to collect from the flow
     var allQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
-    var quinielaToDelete by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var quinielaToDeleteLocal by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var quinielaToDeleteServer by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var showDeleteOptions by remember { mutableStateOf<QuinielaEntity?>(null) }
     var quinielaForOptions by remember { mutableStateOf<QuinielaEntity?>(null) }
     var showBottomSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState()
@@ -145,7 +151,7 @@ fun QuinielasScreen(navController: NavController) {
                     headlineContent = { Text("Eliminar", color = MaterialTheme.colorScheme.error) },
                     leadingContent = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                     modifier = Modifier.clickable {
-                        quinielaToDelete = quinielaForOptions
+                        showDeleteOptions = quinielaForOptions
                         showBottomSheet = false
                         quinielaForOptions = null
                     }
@@ -154,49 +160,73 @@ fun QuinielasScreen(navController: NavController) {
         }
     }
 
-    if (quinielaToDelete != null) {
+    if (showDeleteOptions != null) {
         AlertDialog(
-            onDismissRequest = { quinielaToDelete = null },
-            title = { Text("¿Eliminar quiniela?") },
+            onDismissRequest = { showDeleteOptions = null },
+            title = { Text("¿Cómo deseas eliminar?") },
+            text = { Text("Elige si deseas eliminar esta quiniela solo de este dispositivo o también de los servidores de la nube.") },
+            confirmButton = {
+                val entity = showDeleteOptions!!
+                val isOwner = userViewModel.isLoggedIn && 
+                    userViewModel.email.lowercase().trim() == entity.userEmail.lowercase().trim()
+
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Button(
+                        onClick = {
+                            quinielaToDeleteLocal = showDeleteOptions
+                            showDeleteOptions = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
+                        Text("Solo de este Dispositivo")
+                    }
+                    
+                    if (isOwner) {
+                        Button(
+                            onClick = {
+                                quinielaToDeleteServer = showDeleteOptions
+                                showDeleteOptions = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("De este Dispositivo y del Servidor")
+                        }
+                    }
+
+                    TextButton(
+                        onClick = { showDeleteOptions = null },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Cancelar")
+                    }
+                }
+            },
+            dismissButton = null // We included Cancel in the confirmButton Column for better layout control
+        )
+    }
+
+    if (quinielaToDeleteLocal != null) {
+        AlertDialog(
+            onDismissRequest = { quinielaToDeleteLocal = null },
+            title = { Text("¿Eliminar del dispositivo?") },
             text = { 
-                val name = quinielaToDelete?.quinielaName?.ifEmpty { "(Sin nombre)" }
-                val owner = quinielaToDelete?.propietarioName?.ifEmpty { "Anónimo" }
-                Text("¿Estás seguro de que deseas borrar la quiniela \"$name\" de $owner? Esta acción no se puede deshacer.")
+                val name = quinielaToDeleteLocal?.quinielaName?.ifEmpty { "(Sin nombre)" }
+                Text("¿Estás seguro de que deseas borrar la quiniela \"$name\" de este teléfono? Esta acción no se puede deshacer localmente.")
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        quinielaToDelete?.let { entity ->
-                            // Delete from Firestore "guardadas"
-                            val firestore = FirebaseFirestore.getInstance()
-                            val email = entity.userEmail.lowercase().trim()
-                            val docId = email.replace("@", "_").replace(".", "_")
-                            val mapKey = "${entity.quinielaName.trim()} - ${entity.propietarioName.trim()}"
-                            
-                            if (email.isNotBlank()) {
-                                firestore.collection("guardadas")
-                                    .document(docId)
-                                    .update(FieldPath.of(mapKey), FieldValue.delete())
-                                    .addOnSuccessListener {
-                                        Toast.makeText(context, "Sincronizado con nube", Toast.LENGTH_SHORT).show()
-                                    }
-                                    .addOnFailureListener { e ->
-                                        // Si falla con FieldPath, intentamos con String directo por si acaso
-                                        firestore.collection("guardadas")
-                                            .document(docId)
-                                            .update(mapKey, FieldValue.delete())
-                                            .addOnFailureListener { e2 ->
-                                                Toast.makeText(context, "Error nube: ${e2.message}", Toast.LENGTH_LONG).show()
-                                            }
-                                    }
-                            } else {
-                                Toast.makeText(context, "Aviso: No tiene correo para borrar en nube", Toast.LENGTH_SHORT).show()
-                            }
-
+                        quinielaToDeleteLocal?.let { entity ->
                             coroutineScope.launch {
                                 database.quinielaDao().deleteQuiniela(entity)
-                                quinielaToDelete = null
-                                Toast.makeText(context, "Quiniela eliminada.", Toast.LENGTH_SHORT).show()
+                                quinielaToDeleteLocal = null
+                                Toast.makeText(context, "Quiniela eliminada del dispositivo.", Toast.LENGTH_SHORT).show()
                             }
                         }
                     },
@@ -206,7 +236,105 @@ fun QuinielasScreen(navController: NavController) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { quinielaToDelete = null }) {
+                TextButton(onClick = { quinielaToDeleteLocal = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    if (quinielaToDeleteServer != null) {
+        val initialUser = remember(quinielaToDeleteServer) {
+            quinielaToDeleteServer?.userEmail?.lowercase()?.trim()
+                ?.replace("@", "_")?.replace(".", "_") ?: ""
+        }
+        var userField by remember { mutableStateOf(initialUser) }
+        var passField by remember { mutableStateOf("") }
+        var isVerifying by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { quinielaToDeleteServer = null },
+            title = { Text("Eliminar del Servidor") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Para eliminar esta quiniela de la nube, por favor ingresa tus credenciales de acceso.")
+                    OutlinedTextField(
+                        value = userField,
+                        onValueChange = { userField = it },
+                        label = { Text("Username (Correo formateado)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("ej. usuario_gmail_com") }
+                    )
+                    OutlinedTextField(
+                        value = passField,
+                        onValueChange = { passField = it },
+                        label = { Text("Password") },
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val entity = quinielaToDeleteServer ?: return@Button
+                        val expectedUser = entity.userEmail.lowercase().trim()
+                            .replace("@", "_").replace(".", "_")
+                        
+                        if (userField.trim() != expectedUser) {
+                            Toast.makeText(context, "El username no coincide con el correo de la quiniela.", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+
+                        isVerifying = true
+                        val firestore = FirebaseFirestore.getInstance()
+                        firestore.collection("codigos").document("correos").get()
+                            .addOnSuccessListener { doc ->
+                                val cloudPass = doc.getString(userField.trim())
+                                if (cloudPass != null && cloudPass == passField) {
+                                    // Credentials OK, Proceed to delete from all places
+                                    val email = entity.userEmail.lowercase().trim()
+                                    val docId = email.replace("@", "_").replace(".", "_")
+                                    val mapKey = "${entity.quinielaName.trim()} - ${entity.propietarioName.trim()}"
+                                    
+                                    val batch = firestore.batch()
+                                    
+                                    // 1. Delete from "guardadas"
+                                    val guardadasRef = firestore.collection("guardadas").document(docId)
+                                    batch.update(guardadasRef, FieldPath.of(mapKey), FieldValue.delete())
+                                    
+                                    // 2. Delete from "quinielas" if sent
+                                    val quinielaDocId = "${email}_${entity.quinielaName}_${entity.propietarioName}"
+                                        .lowercase().trim().replace(" ", "_").replace(".", "_").replace("@", "_")
+                                    val quinielaRef = firestore.collection("quinielas").document(quinielaDocId)
+                                    batch.delete(quinielaRef)
+                                    
+                                    batch.commit().addOnCompleteListener {
+                                        coroutineScope.launch {
+                                            database.quinielaDao().deleteQuiniela(entity)
+                                            quinielaToDeleteServer = null
+                                            Toast.makeText(context, "Quiniela eliminada de todos lados.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } else {
+                                    isVerifying = false
+                                    Toast.makeText(context, "Password incorrecta o usuario no encontrado.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            .addOnFailureListener {
+                                isVerifying = false
+                                Toast.makeText(context, "Error al verificar: ${it.message}", Toast.LENGTH_SHORT).show()
+                            }
+                    },
+                    enabled = !isVerifying && userField.isNotBlank() && passField.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    if (isVerifying) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("Confirmar Eliminación Total")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { quinielaToDeleteServer = null }, enabled = !isVerifying) {
                     Text("Cancelar")
                 }
             }
@@ -293,6 +421,39 @@ fun QuinielasScreen(navController: NavController) {
 
             Spacer(modifier = Modifier.height(if (isLandscape) 8.dp else 16.dp))
 
+            if (userViewModel.isLoggedIn) {
+                Button(
+                    onClick = {
+                        if (!userViewModel.isSyncing) {
+                            userViewModel.syncQuinielasFromCloud(database) {
+                                Toast.makeText(context, "Sincronización completada", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Gold.copy(alpha = 0.1f),
+                        contentColor = Gold
+                    ),
+                    shape = MaterialTheme.shapes.medium,
+                    border = borderStroke(),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    Icon(
+                        if (userViewModel.isSyncing) Icons.Default.Sync else Icons.Default.CloudDownload,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        if (userViewModel.isSyncing) "Sincronizando..." else "Cargar mis quinielas (Cloud)",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 80.dp)
@@ -337,7 +498,7 @@ fun QuinielasScreen(navController: NavController) {
                     
                     if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
                         SideEffect {
-                            quinielaToDelete = entity
+                            showDeleteOptions = entity
                             coroutineScope.launch {
                                 dismissState.snapTo(SwipeToDismissBoxValue.Settled)
                             }

@@ -57,7 +57,10 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FieldPath
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlinx.coroutines.tasks.await
 
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beetik.quinielamalenkamexico2026.ui.UserViewModel
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
@@ -66,6 +69,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 fun QuinielaScreen(
     modifier: Modifier = Modifier,
     quinielaId: Int = -1,
+    userViewModel: UserViewModel = viewModel(),
     onBack: () -> Unit = {}
 ) {
     var allMatches by remember { mutableStateOf(MatchRepository.allMatches) }
@@ -98,15 +102,21 @@ fun QuinielaScreen(
     var quinielaName by rememberSaveable { mutableStateOf("") }
     var propietarioName by rememberSaveable { mutableStateOf("") }
     var userEmail by rememberSaveable { mutableStateOf("") }
+    var quinielaCode by rememberSaveable { mutableStateOf("") }
     var isSentByServer by rememberSaveable { mutableStateOf(false) }
     var showValidationErrors by remember { mutableStateOf(false) }
 
     var showLoadDialog by remember { mutableStateOf(false) }
+    var showEmailDialog by remember { mutableStateOf(false) }
+    var targetEmailToLoad by remember { mutableStateOf("") }
+    var isFetchingQuinielas by remember { mutableStateOf(false) }
     var showClearAllDialog by remember { mutableStateOf(false) }
     var showOverwriteDialog by remember { mutableStateOf(false) }
     var showSendConfirmDialog by remember { mutableStateOf(false) }
     var savedQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
-    var quinielaToDelete by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var quinielaToDeleteLocal by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var quinielaToDeleteServer by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var showDeleteOptions by remember { mutableStateOf<QuinielaEntity?>(null) }
 
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val gson = remember { Gson() }
@@ -126,6 +136,7 @@ fun QuinielaScreen(
                         quinielaName = entity.quinielaName
                         propietarioName = entity.propietarioName
                         userEmail = entity.userEmail
+                        quinielaCode = entity.quinielaCode
 
                         val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
                         val winnersType = object : TypeToken<Map<String, String>>() {}.type
@@ -142,15 +153,23 @@ fun QuinielaScreen(
                 }
             }
         } else {
+            // Pre-fill for new quiniela if logged in
+            if (userViewModel.isLoggedIn) {
+                propietarioName = userViewModel.name
+                userEmail = userViewModel.email
+                // Only autocomplete if we are creating a new one and logged in.
+                // We keep it as is, but logic later will handle empty vs loaded.
+                quinielaCode = userViewModel.accessCode
+            }
             isDataLoaded = true
         }
     }
 
-    val hasChanges = remember(isDataLoaded, quinielaName, propietarioName, userEmail, matchResults, groupWinners, originalData, currentId) {
+    val hasChanges = remember(isDataLoaded, quinielaName, propietarioName, userEmail, quinielaCode, matchResults, groupWinners, originalData, currentId) {
         if (!isDataLoaded) return@remember false
         
         if (currentId == -1) {
-             quinielaName.isNotBlank() || propietarioName.isNotBlank() || userEmail.isNotBlank() || 
+             quinielaName.isNotBlank() || propietarioName.isNotBlank() || userEmail.isNotBlank() || quinielaCode.isNotBlank() ||
              matchResults.values.any { it.homeScore.isNotEmpty() || it.awayScore.isNotEmpty() } || 
              groupWinners.isNotEmpty()
         } else {
@@ -160,6 +179,7 @@ fun QuinielaScreen(
             quinielaName != originalData?.quinielaName ||
             propietarioName != originalData?.propietarioName ||
             userEmail != originalData?.userEmail ||
+            quinielaCode != originalData?.quinielaCode ||
             currentResultsJson != originalData?.resultsJson ||
             currentWinnersJson != originalData?.winnersJson
         }
@@ -178,14 +198,32 @@ fun QuinielaScreen(
         val hasName = quinielaName.isNotBlank()
         val hasPropietario = propietarioName.isNotBlank()
         val hasEmail = userEmail.isNotBlank()
+        val hasCode = quinielaCode.isNotBlank()
 
-        if (!hasAnyScore && !hasAnyWinner && !hasName && !hasPropietario && !hasEmail) {
+        if (!hasAnyScore && !hasAnyWinner && !hasName && !hasPropietario && !hasEmail && !hasCode) {
             if (!forceOverwrite) Toast.makeText(context, "No hay datos para guardar.", Toast.LENGTH_SHORT).show()
             onComplete?.invoke()
             return
         }
 
         coroutineScope.launch {
+            // Logic for code if empty:
+            // Use same code as loaded, if never had one use "Male2026"
+            val finalCode = quinielaCode.trim().ifBlank { 
+                originalData?.quinielaCode?.ifBlank { "Male2026" } ?: "Male2026" 
+            }
+
+            // Validation: Check if finalCode exists in Firebase
+            val codesSnap = firestore.collection("codigos").document("creados").get().await()
+            val validCodes = codesSnap.data?.values?.map { it.toString().trim() } ?: emptyList()
+
+            if (!validCodes.contains(finalCode)) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "El código de quiniela no existe.", Toast.LENGTH_LONG).show()
+                }
+                return@launch
+            }
+
             val existing = database.quinielaDao().getQuinielaByNameAndOwner(quinielaName, propietarioName)
             
             val resultsJson = gson.toJson(matchResults)
@@ -196,6 +234,7 @@ fun QuinielaScreen(
                 val isIdentical = existing.quinielaName == quinielaName &&
                                   existing.propietarioName == propietarioName &&
                                   existing.userEmail == userEmail &&
+                                  existing.quinielaCode == finalCode &&
                                   existing.resultsJson == resultsJson &&
                                   existing.winnersJson == winnersJson
                 
@@ -220,6 +259,7 @@ fun QuinielaScreen(
                 quinielaName = quinielaName,
                 propietarioName = propietarioName,
                 userEmail = userEmail,
+                quinielaCode = finalCode,
                 resultsJson = resultsJson,
                 winnersJson = winnersJson,
                 isSent = isSentByServer
@@ -264,6 +304,7 @@ fun QuinielaScreen(
             "quinielaName" to quinielaName.trim(),
             "propietarioName" to propietarioName.trim(),
             "userEmail" to userEmail.lowercase().trim(),
+            "quinielaCode" to quinielaCode.trim().ifBlank { "Male2026" },
             "results" to resultsForFirebase,
             "groupWinners" to groupWinners,
             "updatedAt" to System.currentTimeMillis(),
@@ -341,20 +382,151 @@ fun QuinielaScreen(
         }
     }
 
-    fun loadFirstQuinielaFromRoom() {
-        coroutineScope.launch {
-            val entities = database.quinielaDao().getAllQuinielas()
-            if (entities.isNotEmpty()) {
-                withContext(Dispatchers.Main) {
-                    savedQuinielas = entities
-                    showLoadDialog = true
+    fun fetchQuinielasFromServer(email: String) {
+        val currentEmail = email.lowercase().trim()
+        if (currentEmail.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(currentEmail).matches()) {
+            Toast.makeText(context, "Ingresa un correo válido", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        isFetchingQuinielas = true
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                // 1. Get sent quinielas
+                val sentSnap = firestore.collection("quinielas")
+                    .whereEqualTo("userEmail", currentEmail)
+                    .get().await()
+                
+                // 2. Get saved quinielas
+                val docId = currentEmail.replace("@", "_").replace(".", "_")
+                val savedSnap = firestore.collection("guardadas")
+                    .document(docId)
+                    .get().await()
+
+                val tempList = mutableListOf<QuinielaEntity>()
+
+                // Parse sent quinielas
+                sentSnap.documents.forEach { doc ->
+                    val qName = doc.getString("quinielaName") ?: ""
+                    val oName = doc.getString("propietarioName") ?: ""
+                    val qCode = doc.getString("quinielaCode") ?: ""
+                    val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
+                    val winnersRaw = doc.get("groupWinners") as? Map<String, String>
+                    
+                    if (qName.isNotBlank() && oName.isNotBlank() && resultsRaw != null) {
+                        val results = resultsRaw.mapValues { (_, v) -> 
+                            MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
+                        }
+                        
+                        tempList.add(QuinielaEntity(
+                            id = -1, // Not saved locally yet
+                            quinielaName = qName,
+                            propietarioName = oName,
+                            userEmail = currentEmail,
+                            quinielaCode = qCode,
+                            resultsJson = gson.toJson(results),
+                            winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
+                            isSent = true
+                        ))
+                    }
                 }
-            } else {
+
+                // Parse saved quinielas
+                if (savedSnap.exists()) {
+                    val data = savedSnap.data
+                    data?.forEach { (_, qData) ->
+                        val qMap = qData as? Map<String, Any>
+                        if (qMap != null) {
+                            val qName = qMap["quinielaName"] as? String ?: ""
+                            val oName = qMap["propietarioName"] as? String ?: ""
+                            val qCode = qMap["quinielaCode"] as? String ?: ""
+                            val resultsRaw = qMap["results"] as? Map<String, Map<String, String>>
+                            val winnersRaw = qMap["groupWinners"] as? Map<String, String>
+
+                            if (qName.isNotBlank() && oName.isNotBlank() && resultsRaw != null) {
+                                val results = resultsRaw.mapValues { (_, v) -> 
+                                    MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
+                                }
+
+                                tempList.add(QuinielaEntity(
+                                    id = -1,
+                                    quinielaName = qName,
+                                    propietarioName = oName,
+                                    userEmail = currentEmail,
+                                    quinielaCode = qCode,
+                                    resultsJson = gson.toJson(results),
+                                    winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
+                                    isSent = (qMap["status"] as? String) == "received"
+                                ))
+                            }
+                        }
+                    }
+                }
+
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "No hay quinielas guardadas.", Toast.LENGTH_SHORT).show()
+                    isFetchingQuinielas = false
+                    if (tempList.isEmpty()) {
+                        Toast.makeText(context, "No se encontraron quinielas para este correo.", Toast.LENGTH_LONG).show()
+                    } else {
+                        savedQuinielas = tempList
+                        showLoadDialog = true
+                        showEmailDialog = false
+                    }
+                }
+
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    isFetchingQuinielas = false
+                    Toast.makeText(context, "Error al cargar: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
+    }
+
+    fun loadFirstQuinielaFromRoom() {
+        if (userViewModel.isLoggedIn) {
+            targetEmailToLoad = userViewModel.email
+        }
+        showEmailDialog = true
+    }
+
+    if (showEmailDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!isFetchingQuinielas) showEmailDialog = false },
+            title = { Text("Cargar desde la Nube") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Ingresa el correo electrónico para buscar tus quinielas en el servidor.")
+                    OutlinedTextField(
+                        value = targetEmailToLoad,
+                        onValueChange = { targetEmailToLoad = it },
+                        label = { Text("Correo electrónico") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = !isFetchingQuinielas
+                    )
+                    if (isFetchingQuinielas) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { fetchQuinielasFromServer(targetEmailToLoad) },
+                    enabled = !isFetchingQuinielas && targetEmailToLoad.isNotBlank()
+                ) {
+                    Text("Buscar")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showEmailDialog = false },
+                    enabled = !isFetchingQuinielas
+                ) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     if (showLoadDialog) {
@@ -416,6 +588,7 @@ fun QuinielaScreen(
                                         quinielaName = entity.quinielaName
                                         propietarioName = entity.propietarioName
                                         userEmail = entity.userEmail
+                                        quinielaCode = entity.quinielaCode
                                         
                                         val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
                                         val winnersType = object : TypeToken<Map<String, String>>() {}.type
@@ -447,7 +620,7 @@ fun QuinielaScreen(
                                         color = if (isComplete) Color(0xFF1565C0).copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     
-                                    if (isComplete) {
+                                        if (isComplete) {
                                         Text(
                                             text = "✓ Completa",
                                             style = MaterialTheme.typography.labelSmall,
@@ -455,16 +628,6 @@ fun QuinielaScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
-                                }
-                                
-                                IconButton(
-                                    onClick = { quinielaToDelete = entity }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Borrar",
-                                        tint = Color.Black
-                                    )
                                 }
                             }
                         }
@@ -479,54 +642,79 @@ fun QuinielaScreen(
         )
     }
 
-    if (quinielaToDelete != null) {
+    if (showDeleteOptions != null) {
         AlertDialog(
-            onDismissRequest = { quinielaToDelete = null },
-            title = { Text("¿Eliminar quiniela?") },
+            onDismissRequest = { showDeleteOptions = null },
+            title = { Text("¿Cómo deseas eliminar?") },
+            text = { Text("Elige si deseas eliminar esta quiniela solo de este dispositivo o también de los servidores de la nube.") },
+            confirmButton = {
+                val entity = showDeleteOptions!!
+                val isOwner = userViewModel.isLoggedIn && 
+                    userViewModel.email.lowercase().trim() == entity.userEmail.lowercase().trim()
+
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Button(
+                        onClick = {
+                            quinielaToDeleteLocal = showDeleteOptions
+                            showDeleteOptions = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    ) {
+                        Text("Solo de este Dispositivo")
+                    }
+                    
+                    if (isOwner) {
+                        Button(
+                            onClick = {
+                                quinielaToDeleteServer = showDeleteOptions
+                                showDeleteOptions = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("De este Dispositivo y del Servidor")
+                        }
+                    }
+
+                    TextButton(
+                        onClick = { showDeleteOptions = null },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Cancelar")
+                    }
+                }
+            },
+            dismissButton = null
+        )
+    }
+
+    if (quinielaToDeleteLocal != null) {
+        AlertDialog(
+            onDismissRequest = { quinielaToDeleteLocal = null },
+            title = { Text("¿Eliminar del dispositivo?") },
             text = { 
-                val name = quinielaToDelete?.quinielaName?.ifEmpty { "(Sin nombre)" }
-                val owner = quinielaToDelete?.propietarioName?.ifEmpty { "Anónimo" }
-                Text("¿Estás seguro de que deseas borrar la quiniela \"$name\" de $owner? Esta acción no se puede deshacer.")
+                val name = quinielaToDeleteLocal?.quinielaName?.ifEmpty { "(Sin nombre)" }
+                Text("¿Estás seguro de que deseas borrar la quiniela \"$name\" de este teléfono? Esta acción no se puede deshacer localmente.")
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        quinielaToDelete?.let { entity ->
-                            // Delete from Firestore "guardadas"
-                            val email = entity.userEmail.lowercase().trim()
-                            val docId = email.replace("@", "_").replace(".", "_")
-                            val mapKey = "${entity.quinielaName.trim()} - ${entity.propietarioName.trim()}"
-                            
-                            if (email.isNotBlank()) {
-                                firestore.collection("guardadas")
-                                    .document(docId)
-                                    .update(FieldPath.of(mapKey), FieldValue.delete())
-                                    .addOnSuccessListener {
-                                        Toast.makeText(context, "Sincronizado con nube", Toast.LENGTH_SHORT).show()
-                                    }
-                                    .addOnFailureListener { e ->
-                                        // Si falla con FieldPath, intentamos con String directo por si acaso
-                                        firestore.collection("guardadas")
-                                            .document(docId)
-                                            .update(mapKey, FieldValue.delete())
-                                            .addOnFailureListener { e2 ->
-                                                Toast.makeText(context, "Error nube: ${e2.message}", Toast.LENGTH_LONG).show()
-                                            }
-                                    }
-                            } else {
-                                Toast.makeText(context, "Aviso: No tiene correo para borrar en nube", Toast.LENGTH_SHORT).show()
-                            }
-
+                        quinielaToDeleteLocal?.let { entity ->
                             coroutineScope.launch {
                                 database.quinielaDao().deleteQuiniela(entity)
                                 val updatedEntities = database.quinielaDao().getAllQuinielas()
                                 withContext(Dispatchers.Main) {
                                     savedQuinielas = updatedEntities
-                                    quinielaToDelete = null
+                                    quinielaToDeleteLocal = null
                                     if (updatedEntities.isEmpty()) {
                                         showLoadDialog = false
                                     }
-                                    Toast.makeText(context, "Quiniela eliminada.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Quiniela eliminada del dispositivo.", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -537,7 +725,111 @@ fun QuinielaScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { quinielaToDelete = null }) {
+                TextButton(onClick = { quinielaToDeleteLocal = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    if (quinielaToDeleteServer != null) {
+        val initialUser = remember(quinielaToDeleteServer) {
+            quinielaToDeleteServer?.userEmail?.lowercase()?.trim()
+                ?.replace("@", "_")?.replace(".", "_") ?: ""
+        }
+        var userField by remember { mutableStateOf(initialUser) }
+        var passField by remember { mutableStateOf("") }
+        var isVerifying by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { quinielaToDeleteServer = null },
+            title = { Text("Eliminar del Servidor") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Para eliminar esta quiniela de la nube, por favor ingresa tus credenciales de acceso.")
+                    OutlinedTextField(
+                        value = userField,
+                        onValueChange = { userField = it },
+                        label = { Text("Username (Correo formateado)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("ej. usuario_gmail_com") }
+                    )
+                    OutlinedTextField(
+                        value = passField,
+                        onValueChange = { passField = it },
+                        label = { Text("Password") },
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val entity = quinielaToDeleteServer ?: return@Button
+                        val expectedUser = entity.userEmail.lowercase().trim()
+                            .replace("@", "_").replace(".", "_")
+                        
+                        if (userField.trim() != expectedUser) {
+                            Toast.makeText(context, "El username no coincide con el correo de la quiniela.", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+
+                        isVerifying = true
+                        firestore.collection("codigos").document("correos").get()
+                            .addOnSuccessListener { doc ->
+                                val cloudPass = doc.getString(userField.trim())
+                                if (cloudPass != null && cloudPass == passField) {
+                                    // Credentials OK, Proceed to delete from all places
+                                    val email = entity.userEmail.lowercase().trim()
+                                    val docId = email.replace("@", "_").replace(".", "_")
+                                    val mapKey = "${entity.quinielaName.trim()} - ${entity.propietarioName.trim()}"
+                                    
+                                    val batch = firestore.batch()
+                                    
+                                    // 1. Delete from "guardadas"
+                                    val guardadasRef = firestore.collection("guardadas").document(docId)
+                                    batch.update(guardadasRef, FieldPath.of(mapKey), FieldValue.delete())
+                                    
+                                    // 2. Delete from "quinielas" if sent
+                                    val quinielaDocId = "${email}_${entity.quinielaName}_${entity.propietarioName}"
+                                        .lowercase().trim().replace(" ", "_").replace(".", "_").replace("@", "_")
+                                    val quinielaRef = firestore.collection("quinielas").document(quinielaDocId)
+                                    batch.delete(quinielaRef)
+                                    
+                                    batch.commit().addOnCompleteListener {
+                                        coroutineScope.launch {
+                                            database.quinielaDao().deleteQuiniela(entity)
+                                            val updatedEntities = database.quinielaDao().getAllQuinielas()
+                                            withContext(Dispatchers.Main) {
+                                                savedQuinielas = updatedEntities
+                                                quinielaToDeleteServer = null
+                                                if (updatedEntities.isEmpty()) {
+                                                    showLoadDialog = false
+                                                }
+                                                Toast.makeText(context, "Quiniela eliminada de todos lados.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    isVerifying = false
+                                    Toast.makeText(context, "Password incorrecta o usuario no encontrado.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            .addOnFailureListener {
+                                isVerifying = false
+                                Toast.makeText(context, "Error al verificar: ${it.message}", Toast.LENGTH_SHORT).show()
+                            }
+                    },
+                    enabled = !isVerifying && userField.isNotBlank() && passField.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    if (isVerifying) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("Confirmar Eliminación Total")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { quinielaToDeleteServer = null }, enabled = !isVerifying) {
                     Text("Cancelar")
                 }
             }
@@ -909,6 +1201,26 @@ fun QuinielaScreen(
                                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
                                 imeAction = ImeAction.Next
                             ),
+                            keyboardActions = KeyboardActions(
+                                onNext = { focusManager.moveFocus(FocusDirection.Next) }
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                            )
+                        )
+
+                        OutlinedTextField(
+                            value = quinielaCode,
+                            onValueChange = { 
+                                quinielaCode = it
+                                isSentByServer = false 
+                            },
+                            label = { Text("Código de Quiniela") },
+                            placeholder = { Text("Opcional") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                             keyboardActions = KeyboardActions(
                                 onNext = {
                                     val firstGroup = groupNames.firstOrNull()

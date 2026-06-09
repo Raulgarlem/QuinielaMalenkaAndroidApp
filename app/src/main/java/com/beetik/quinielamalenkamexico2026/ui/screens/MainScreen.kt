@@ -17,10 +17,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.*
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beetik.quinielamalenkamexico2026.ui.UserViewModel
 import com.beetik.quinielamalenkamexico2026.ui.navigation.Screen
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 
@@ -36,6 +35,7 @@ val LocalQuinielaEditState = staticCompositionLocalOf { QuinielaEditState() }
 fun MainScreen() {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val userViewModel: UserViewModel = viewModel()
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -167,22 +167,26 @@ fun MainScreen() {
                 startDestination = Screen.Inicio.route,
                 modifier = Modifier.padding(innerPadding)
             ) {
-                composable(Screen.Inicio.route) { InicioScreen() }
-                composable(Screen.Quinielas.route) { QuinielasScreen(navController) }
+                composable(Screen.Inicio.route) { InicioScreen(userViewModel = userViewModel) }
+                composable(Screen.Quinielas.route) { QuinielasScreen(navController, userViewModel = userViewModel) }
                 composable(Screen.Partidos.route) { PartidosScreen() }
                 composable(Screen.Ranking.route) { RankingScreen() }
-                composable(Screen.Perfil.route) { PerfilScreen() }
+                composable(Screen.Perfil.route) { PerfilScreen(userViewModel = userViewModel) }
                 composable(Screen.FillQuiniela.route) { backStackEntry ->
                     val quinielaId = backStackEntry.arguments?.getString("quinielaId")?.toIntOrNull() ?: -1
-                    QuinielaScreen(quinielaId = quinielaId, onBack = {
-                        val backAction: () -> Unit = { navController.popBackStack() }
-                        if (editState.hasUnsavedChanges) {
-                            pendingAction = backAction
-                            showUnsavedDialog = true
-                        } else {
-                            backAction()
+                    QuinielaScreen(
+                        quinielaId = quinielaId,
+                        userViewModel = userViewModel,
+                        onBack = {
+                            val backAction: () -> Unit = { navController.popBackStack() }
+                            if (editState.hasUnsavedChanges) {
+                                pendingAction = backAction
+                                showUnsavedDialog = true
+                            } else {
+                                backAction()
+                            }
                         }
-                    })
+                    )
                 }
             }
         }

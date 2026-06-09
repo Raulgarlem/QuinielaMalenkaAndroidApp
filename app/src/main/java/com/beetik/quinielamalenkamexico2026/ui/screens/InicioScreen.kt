@@ -35,11 +35,16 @@ import java.util.*
 import java.text.SimpleDateFormat
 
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.beetik.quinielamalenkamexico2026.ui.UserViewModel
 import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.RankingViewModel
+import com.beetik.quinielamalenkamexico2026.util.ScoreCalculator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
+fun InicioScreen(
+    rankingViewModel: RankingViewModel = viewModel(),
+    userViewModel: UserViewModel = viewModel()
+) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -141,48 +146,6 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
             table.keys.sortedWith(compareByDescending<String> { table[it] ?: 0 }.thenByDescending { goals[it] ?: 0 }).firstOrNull()
         }
 
-        fun calculateTotalPoints(matchPreds: Map<String, Any>, winnerPreds: Map<String, String>): Triple<Int, Int, Int> {
-            var p = 0
-            var h = 0
-            var e = 0
-            
-            allMatches.forEach { match ->
-                val rh = match.realHomeScore
-                val ra = match.realAwayScore
-                if (rh != null && ra != null) {
-                    val pred = matchPreds[match.id]
-                    val (uh, ua) = when (pred) {
-                        is Pair<*, *> -> (pred.first as? Int) to (pred.second as? Int)
-                        is MatchResult -> pred.homeScore.toIntOrNull() to pred.awayScore.toIntOrNull()
-                        else -> null to null
-                    }
-                    
-                    if (uh != null && ua != null) {
-                        if (uh == rh && ua == ra) {
-                            e++
-                            h++
-                            p += 2
-                        } else {
-                            val rW = when { rh > ra -> 1; rh < ra -> 2; else -> 0 }
-                            val uW = when { uh > ua -> 1; uh < ua -> 2; else -> 0 }
-                            if (rW == uW) {
-                                h++
-                                p += 1
-                            }
-                        }
-                    }
-                }
-            }
-            
-            realGroupWinners.forEach { (group, realWinner) ->
-                val isGroupFinished = matchesByGroup[group]?.all { it.realHomeScore != null } == true
-                if (isGroupFinished && realWinner != null) {
-                    if (winnerPreds[group] == realWinner) p += 2
-                }
-            }
-            return Triple(p, h, e)
-        }
-
         // 1. Calcular puntos de la quiniela seleccionada
         val currentQ = selectedQuiniela
         val userMatchPreds: Map<String, MatchResult> = if (currentQ != null) {
@@ -193,11 +156,14 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
             try { gson.fromJson(currentQ.winnersJson, winnersType) } catch (_: Exception) { emptyMap() }
         } else emptyMap()
         
-        val currentStats = calculateTotalPoints(userMatchPreds, userWinnerPreds)
+        val currentStats = ScoreCalculator.calculateStats(allMatches, userMatchPreds, userWinnerPreds)
         
         // 2. Calcular puntos de los participantes oficiales de la tabla general
         val officialScores = officialParticipants.map { participant ->
-            calculateTotalPoints(participant.predictions, participant.groupWinnerPredictions).first
+            val participantPreds = participant.predictions.mapValues { (_, v) ->
+                MatchResult(v.first.toString(), v.second.toString())
+            }
+            ScoreCalculator.calculateStats(allMatches, participantPreds, participant.groupWinnerPredictions).totalPoints
         }
         
         // 3. Determinar posición (Igual que en RankingScreen para quinielas añadidas)
@@ -205,7 +171,7 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
             .withIndex().associate { it.value to it.index + 1 }
             
         val rank = if (currentQ != null) {
-            val score = currentStats.first
+            val score = currentStats.totalPoints
             val matchScore = officialScoreToRank.keys.firstOrNull { it <= score }
             if (matchScore != null) {
                 officialScoreToRank[matchScore] ?: 1
@@ -219,12 +185,12 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
         val finishedGroups = matchesByGroup.count { (group, matches) -> matches.all { it.realHomeScore != null } }
         val maxPointsPossible = (finishedMatches * 2) + (finishedGroups * 2)
 
-        val effectiveness = if (maxPointsPossible > 0) (currentStats.first.toFloat() / maxPointsPossible * 100).toInt() else 0
+        val effectiveness = if (maxPointsPossible > 0) (currentStats.totalPoints.toFloat() / maxPointsPossible * 100).toInt() else 0
         
         object {
-            val points = currentStats.first
-            val hits = currentStats.second
-            val exacts = currentStats.third
+            val points = currentStats.totalPoints
+            val hits = currentStats.hits
+            val exacts = currentStats.exacts
             val eff = effectiveness
             val position = rank
             val total = totalParticipantsGeneral
@@ -329,7 +295,7 @@ fun InicioScreen(rankingViewModel: RankingViewModel = viewModel()) {
             item {
                 Column {
                     Text(
-                        "Hola Raúl 👋",
+                        if (userViewModel.isLoggedIn) "Hola ${userViewModel.name} 👋" else "¡Hola! 👋",
                         style = if (isLandscape) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
