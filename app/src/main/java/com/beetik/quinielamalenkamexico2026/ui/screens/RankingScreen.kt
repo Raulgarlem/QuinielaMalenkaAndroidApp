@@ -627,6 +627,7 @@ fun RankingScreen(
                     allMatches = allMatches,
                     dayMatches = dayMatches,
                     participants = filteredParticipants, 
+                    allOfficialParticipants = baseParticipants.filter { !it.id.startsWith("loaded_") },
                     resultsMap = resultsMap, 
                     scores = cardsScoresAndRanks.first, 
                     ranks = cardsScoresAndRanks.second, 

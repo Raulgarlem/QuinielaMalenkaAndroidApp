@@ -28,6 +28,13 @@ fun GroupStandingsView(
     headerContent: (@Composable () -> Unit)? = null
 ) {
     val groups = remember(allMatches) { allMatches.map { it.group }.distinct().sorted() }
+    
+    // Pre-calculate all stats to avoid doing it during scroll (VITAL for performance)
+    val allGroupStats = remember(groups, resultsMap, allMatches) {
+        groups.associateWith { groupName ->
+            calculateGroupStats(groupName, allMatches, resultsMap)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -45,10 +52,7 @@ fun GroupStandingsView(
                 // User prediction header
                 val predictedWinner = userGroupWinners[groupName] ?: "-"
                 
-                // Calcular estadísticas para saber quién va en primer lugar
-                val stats = remember(groupName, resultsMap) {
-                    calculateGroupStats(groupName, allMatches, resultsMap)
-                }
+                val stats = allGroupStats[groupName] ?: emptyList()
                 val currentLeader = stats.firstOrNull()?.name
                 val isFavoriteLeading = currentLeader != null && currentLeader == predictedWinner
 
@@ -86,18 +90,14 @@ fun GroupStandingsView(
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 
-                StandingsTable(groupName, allMatches, resultsMap)
+                StandingsTable(stats)
             }
         }
     }
 }
 
 @Composable
-fun StandingsTable(groupName: String, allMatches: List<Match>, results: Map<String, Pair<Int, Int>>) {
-    val stats = remember(groupName, results) {
-        calculateGroupStats(groupName, allMatches, results)
-    }
-
+fun StandingsTable(stats: List<TeamStandings>) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // Header
         Row(
@@ -144,7 +144,7 @@ fun StandingsTable(groupName: String, allMatches: List<Match>, results: Map<Stri
     }
 }
 
-private data class TeamStandings(
+data class TeamStandings(
     val name: String,
     val flag: String,
     var points: Int = 0,

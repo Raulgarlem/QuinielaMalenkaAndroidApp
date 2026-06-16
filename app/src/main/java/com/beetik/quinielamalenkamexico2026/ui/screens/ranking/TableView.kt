@@ -251,7 +251,7 @@ fun TableView(
                 }
                 if (lastMatchIdsByGroup.contains(match.id)) {
                     item(key = "winner_${match.group}") {
-                        val actualWinner = remember(resultsMap.size, resultsMap.values.toList(), match.group) { getGroupWinner(match.group, matches, resultsMap) }
+                        val actualWinner = remember(resultsMap.size, match.group) { getGroupWinner(match.group, matches, resultsMap) }
                         val groupMatches = matches.filter { it.group == match.group }
                         val isGroupFinished = groupMatches.all { it.id in resultsMap }
                         val showWinnerResult = isGroupFinished || isLiveRanking

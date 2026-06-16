@@ -3,9 +3,11 @@ package com.beetik.quinielamalenkamexico2026.ui.screens.ranking
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,8 +36,30 @@ fun MatchesListView(
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val listState = rememberLazyListState()
+
+    // Auto-scroll logic: Live first, then next upcoming
+    LaunchedEffect(filteredMatches) {
+        if (filteredMatches.isNotEmpty()) {
+            val liveIndex = filteredMatches.indexOfFirst { it.started && it.isActive }
+            val nextUpcomingIndex = filteredMatches.indexOfFirst { !it.finished }
+            
+            val targetIndex = when {
+                liveIndex != -1 -> liveIndex
+                nextUpcomingIndex != -1 -> nextUpcomingIndex
+                else -> -1
+            }
+
+            if (targetIndex != -1) {
+                // Offset by 1 if there's a header
+                val finalIndex = if (headerContent != null) targetIndex + 1 else targetIndex
+                listState.animateScrollToItem(finalIndex)
+            }
+        }
+    }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(if (isLandscape) 8.dp else 12.dp),
@@ -48,19 +72,34 @@ fun MatchesListView(
         }
         
         items(filteredMatches, key = { it.id }) { match ->
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                val result = matchResults[match.id]
-                
-                val matchDateTime = try {
+            val result = matchResults[match.id]
+            
+            // Pre-calculate date/time and points outside the complex item if possible, 
+            // or just ensure the item itself is efficient.
+            val matchDateTime = remember(match.date, match.time) {
+                try {
                     sdfCDMX.parse("${match.date} ${match.time}")
                 } catch (_: Exception) {
                     null
                 }
-                
-                val displayTime = matchDateTime?.let { sdfLocalTime.format(it) } ?: match.time
-                val displayDate = matchDateTime?.let { sdfLocalDisplayDate.format(it) } ?: match.date
+            }
+            
+            val displayTime = remember(matchDateTime) { matchDateTime?.let { sdfLocalTime.format(it) } ?: match.time }
+            val displayDate = remember(matchDateTime) { matchDateTime?.let { sdfLocalDisplayDate.format(it) } ?: match.date }
 
-                InternalMatchItem(match, result, displayDate, displayTime, isLandscape)
+            val points = remember(match, result) {
+                if (match.realHomeScore != null && match.realAwayScore != null && result != null) {
+                    val hP = result.homeScore.toIntOrNull()
+                    val aP = result.awayScore.toIntOrNull()
+                    if (hP != null && aP != null) {
+                        val actualScore = com.beetik.quinielamalenkamexico2026.model.MatchScore(match.realHomeScore, match.realAwayScore)
+                        calculatePoints(hP to aP, actualScore).toString()
+                    } else "-"
+                } else "-"
+            }
+
+            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                InternalMatchItem(match, result, displayDate, displayTime, points, isLandscape)
             }
         }
     }
@@ -72,6 +111,7 @@ private fun InternalMatchItem(
     prediction: MatchResult?, 
     displayDate: String, 
     displayTime: String,
+    points: String,
     isLandscape: Boolean
 ) {
     Card(
@@ -262,16 +302,6 @@ private fun InternalMatchItem(
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = if (isLandscape) 9.sp else 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    
-                    // Lógica de puntos basada siempre en el marcador real de Firebase
-                    val points = if (match.realHomeScore != null && match.realAwayScore != null && prediction != null) {
-                        val hP = prediction.homeScore.toIntOrNull()
-                        val aP = prediction.awayScore.toIntOrNull()
-                        if (hP != null && aP != null) {
-                            val actualScore = com.beetik.quinielamalenkamexico2026.model.MatchScore(match.realHomeScore, match.realAwayScore)
-                            calculatePoints(hP to aP, actualScore).toString()
-                        } else "-"
-                    } else "-"
                     
                     val isLive = match.started && match.isActive
                     val isFinished = match.finished && !match.isActive

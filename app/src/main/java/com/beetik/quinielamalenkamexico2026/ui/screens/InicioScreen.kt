@@ -114,16 +114,17 @@ fun InicioScreen(
     }
 
     // --- Lógica de Estadísticas ---
-    val statsInfo = remember(selectedQuiniela, allMatches, officialParticipants) {
-        val currentQ = selectedQuiniela ?: return@remember null
-
+    val userMatchPreds = remember(selectedQuiniela) {
+        val currentQ = selectedQuiniela ?: return@remember emptyMap<String, MatchResult>()
         val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
-        val winnersType = object : TypeToken<Map<String, String>>() {}.type
-        
-        // 1. Obtener predicciones de la quiniela seleccionada
-        val userMatchPreds: Map<String, MatchResult> = try { 
-            gson.fromJson(currentQ.resultsJson, resultsType) 
+        try { 
+            gson.fromJson<Map<String, MatchResult>>(currentQ.resultsJson, resultsType) 
         } catch (_: Exception) { emptyMap() }
+    }
+
+    val statsInfo = remember(userMatchPreds, selectedQuiniela, allMatches, officialParticipants) {
+        val currentQ = selectedQuiniela ?: return@remember null
+        val winnersType = object : TypeToken<Map<String, String>>() {}.type
         
         val userWinnerPreds: Map<String, String> = try { 
             gson.fromJson(currentQ.winnersJson, winnersType) 
@@ -343,7 +344,7 @@ fun InicioScreen(
 
             items(nextMatchesData.size) { index ->
                 val (match, time, date) = nextMatchesData[index]
-                MatchPreviewCard(match, date, time)
+                MatchPreviewCard(match, date, time, userMatchPreds[match.id])
             }
 
             item {
@@ -438,7 +439,7 @@ fun SummaryCard(
 }
 
 @Composable
-fun MatchPreviewCard(match: Match, displayDate: String, displayTime: String) {
+fun MatchPreviewCard(match: Match, displayDate: String, displayTime: String, prediction: MatchResult?) {
     val isLive = match.started && match.isActive
     val isFinished = match.finished && !match.isActive
 
@@ -446,37 +447,62 @@ fun MatchPreviewCard(match: Match, displayDate: String, displayTime: String) {
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                Text(match.homeFlag, fontSize = 32.sp)
-                Text(match.homeTeam, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-            }
-            
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp)) {
-                if (isLive) {
-                    Surface(color = Color(0xFFE91E63), shape = RoundedCornerShape(4.dp)) {
-                        Text("VIVO", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                    Text(match.homeFlag, fontSize = 32.sp)
+                    Text(match.homeTeam, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                }
+                
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    if (isLive) {
+                        Surface(color = Color(0xFFE91E63), shape = RoundedCornerShape(4.dp)) {
+                            Text("VIVO", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("${match.realHomeScore ?: 0} - ${match.realAwayScore ?: 0}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = Color(0xFFE91E63))
+                    } else if (isFinished) {
+                        Text("FINAL", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                        Text("${match.realHomeScore ?: 0} - ${match.realAwayScore ?: 0}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    } else {
+                        Text(displayDate, style = MaterialTheme.typography.labelSmall)
+                        Text(displayTime, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("${match.realHomeScore ?: 0} - ${match.realAwayScore ?: 0}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = Color(0xFFE91E63))
-                } else if (isFinished) {
-                    Text("FINAL", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                    Text("${match.realHomeScore ?: 0} - ${match.realAwayScore ?: 0}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                } else {
-                    Text(displayDate, style = MaterialTheme.typography.labelSmall)
-                    Text(displayTime, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                    Text(match.awayFlag, fontSize = 32.sp)
+                    Text(match.awayTeam, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                 }
             }
-
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                Text(match.awayFlag, fontSize = 32.sp)
-                Text(match.awayTeam, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+            
+            if (prediction != null && prediction.homeScore.isNotBlank() && prediction.awayScore.isNotBlank()) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "TU PRONÓSTICO: ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "${prediction.homeScore} - ${prediction.awayScore}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Gold
+                    )
+                }
             }
         }
     }

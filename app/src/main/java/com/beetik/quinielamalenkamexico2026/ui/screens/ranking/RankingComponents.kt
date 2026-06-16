@@ -90,14 +90,16 @@ fun PredictionCell(
     actual: MatchScore?,
     matchHistoryRanks: Map<String, Map<String, Int>>
 ) {
-    val pred = p.predictions[match.id] ?: (0 to 0)
-    val pts = if (actual != null) calculatePoints(pred, actual) else 0
+    val pred = remember(p.id, match.id) { p.predictions[match.id] ?: (0 to 0) }
+    val pts = remember(pred, actual) { if (actual != null) calculatePoints(pred, actual) else 0 }
     
-    val historicalRank = matchHistoryRanks[match.id]?.get(p.id)
-    val cellBg = when (historicalRank) {
-        1 -> Gold.copy(alpha = 0.15f)
-        2 -> Color(0xFF2196F3).copy(alpha = 0.15f)
-        else -> Color.Transparent
+    val historicalRank = remember(match.id, p.id, matchHistoryRanks) { matchHistoryRanks[match.id]?.get(p.id) }
+    val cellBg = remember(historicalRank) {
+        when (historicalRank) {
+            1 -> Gold.copy(alpha = 0.15f)
+            2 -> Color(0xFF2196F3).copy(alpha = 0.15f)
+            else -> Color.Transparent
+        }
     }
 
     Row(

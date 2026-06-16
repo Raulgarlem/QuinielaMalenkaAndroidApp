@@ -59,6 +59,7 @@ fun CardsView(
     allMatches: List<Match>,
     dayMatches: List<Match>, 
     participants: List<Participant>,
+    allOfficialParticipants: List<Participant>,
     resultsMap: Map<String, MatchScore>, 
     scores: Map<String, Int>, 
     ranks: Map<String, Int>,
@@ -83,6 +84,15 @@ fun CardsView(
 ) {
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+    val dateLazyListState = rememberLazyListState()
+
+    // Autoscroll to selected date (today) on launch
+    LaunchedEffect(availableDates) {
+        val index = availableDates.indexOf(selectedDate)
+        if (index != -1) {
+            dateLazyListState.scrollToItem(index)
+        }
+    }
 
     val compP = participants.find { it.id == comparisonParticipantId }
     val scrollableParticipants = participants.filter { it.id != comparisonParticipantId }
@@ -104,6 +114,7 @@ fun CardsView(
     Column(modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(bottom = 8.dp)) {
         // Selector de Fecha
         LazyRow(
+            state = dateLazyListState,
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -153,10 +164,10 @@ fun CardsView(
                 val actualInMap = resultsMap[match.id]
                 val effectiveScore = actualInMap ?: if (match.started) match.realHomeScore?.let { h -> match.realAwayScore?.let { a -> MatchScore(h, a) } } else null
                 
-                val stats = remember(effectiveScore, participants) {
+                val stats = remember(effectiveScore, allOfficialParticipants) {
                     if (effectiveScore != null) {
                         val counts = mutableMapOf(2 to 0, 1 to 0, 0 to 0)
-                        participants.forEach { p ->
+                        allOfficialParticipants.forEach { p ->
                             val pred = p.predictions[match.id]
                             if (pred != null) {
                                 val pts = calculatePoints(pred, effectiveScore)
@@ -201,7 +212,7 @@ fun CardsView(
                         
                         todayGroups.sorted().forEach { groupName ->
                             val winner = currentWinners[groupName]
-                            val predCount = participants.count { it.groupWinnerPredictions[groupName] == winner?.first }
+                            val predCount = allOfficialParticipants.count { it.groupWinnerPredictions[groupName] == winner?.first }
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.Center,

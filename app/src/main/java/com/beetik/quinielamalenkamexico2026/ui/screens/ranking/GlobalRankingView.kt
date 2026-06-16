@@ -1,9 +1,6 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens.ranking
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -35,6 +32,8 @@ import com.beetik.quinielamalenkamexico2026.ui.theme.Error as ErrorColor
 import java.text.SimpleDateFormat
 import java.util.*
 
+enum class RankingFilter { TOP_5, NEAR_ME, GENERAL }
+
 @Composable
 fun GlobalRankingView(
     participants: List<Participant>,
@@ -47,7 +46,7 @@ fun GlobalRankingView(
     onClearSimulation: (Match) -> Unit,
     onMatchClick: (Match) -> Unit
 ) {
-    var showTop5Mode by remember { mutableStateOf(true) }
+    var rankingFilter by remember { mutableStateOf(RankingFilter.TOP_5) }
 
     // Filter out "Added" quinielas (id starting with loaded_)
     val officialParticipants = remember(participants) {
@@ -164,19 +163,23 @@ fun GlobalRankingView(
     val sortedByRank = officialParticipants.sortedBy { currentRanks[it.id] ?: 999 }
     val userIndex = sortedByRank.indexOfFirst { it.isUser }
     
-    val displayParticipants = if (showTop5Mode) {
-        val top5 = sortedByRank.take(5)
-        if (userIndex >= 5 && userIndex != -1) top5 + sortedByRank[userIndex] else top5
-    } else {
-        if (userIndex != -1) {
-            val total = sortedByRank.size
-            val count = 6
-            val idealStart = userIndex - 3
-            val start = idealStart.coerceIn(0, (total - count).coerceAtLeast(0))
-            sortedByRank.subList(start, (start + count).coerceAtMost(total))
-        } else {
-            sortedByRank.take(6)
+    val displayParticipants = when (rankingFilter) {
+        RankingFilter.TOP_5 -> {
+            val top5 = sortedByRank.take(5)
+            if (userIndex >= 5 && userIndex != -1) top5 + sortedByRank[userIndex] else top5
         }
+        RankingFilter.NEAR_ME -> {
+            if (userIndex != -1) {
+                val total = sortedByRank.size
+                val count = 6
+                val idealStart = userIndex - 3
+                val start = idealStart.coerceIn(0, (total - count).coerceAtLeast(0))
+                sortedByRank.subList(start, (start + count).coerceAtMost(total))
+            } else {
+                sortedByRank.take(6)
+            }
+        }
+        RankingFilter.GENERAL -> sortedByRank
     }
 
     LazyColumn(
@@ -209,10 +212,21 @@ fun GlobalRankingView(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xFF1E2228))
-                            .clickable { showTop5Mode = !showTop5Mode }
+                            .clickable {
+                                rankingFilter = when (rankingFilter) {
+                                    RankingFilter.TOP_5 -> RankingFilter.NEAR_ME
+                                    RankingFilter.NEAR_ME -> RankingFilter.GENERAL
+                                    RankingFilter.GENERAL -> RankingFilter.TOP_5
+                                }
+                            }
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text(if (showTop5Mode) "Top 5" else "Cerca de mí", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        val filterText = when (rankingFilter) {
+                            RankingFilter.TOP_5 -> "Top 5"
+                            RankingFilter.NEAR_ME -> "Cerca de mí"
+                            RankingFilter.GENERAL -> "General"
+                        }
+                        Text(filterText, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
                 
@@ -222,7 +236,13 @@ fun GlobalRankingView(
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f))
                 ) {
-                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    val scrollState = rememberScrollState()
+                    Column(
+                        modifier = Modifier
+                            .padding(vertical = 4.dp)
+                            .heightIn(max = 330.dp)
+                            .verticalScroll(scrollState)
+                    ) {
                         displayParticipants.forEach { p ->
                             ParticipantRankItem(
                                 participant = p,
@@ -247,18 +267,26 @@ fun GlobalRankingView(
                     Triple(it, basR - curR, ptsG)
                 }
                 
-                val rankUp = participantsData.filter { it.second > 0 }.sortedByDescending { it.second }
-                val rankDown = participantsData.filter { it.second < 0 }.sortedBy { it.second }
+                val rankUp = participantsData.filter { it.second > 0 }
+                    .sortedWith(compareByDescending<Triple<Participant, Int, Int>> { it.second }
+                        .thenBy { currentRanks[it.first.id] ?: 999 })
+                
+                val rankDown = participantsData.filter { it.second < 0 }
+                    .sortedWith(compareBy<Triple<Participant, Int, Int>> { it.second }
+                        .thenByDescending { currentRanks[it.first.id] ?: 0 })
                 
                 val showPointsInsteadOfRank = rankUp.isEmpty()
                 
                 val beneficiados = if (!showPointsInsteadOfRank) {
-                    rankUp.take(4).map { it.first to it.second }
+                    rankUp.map { it.first to it.second }
                 } else {
-                    participantsData.filter { it.third > 0 }.sortedByDescending { it.third }.take(4).map { it.first to it.third }
+                    participantsData.filter { it.third > 0 }
+                        .sortedWith(compareByDescending<Triple<Participant, Int, Int>> { it.third }
+                            .thenBy { currentRanks[it.first.id] ?: 999 })
+                        .map { it.first to it.third }
                 }
                 
-                val perjudicados = rankDown.take(4).map { it.first to it.second }
+                val perjudicados = rankDown.map { it.first to it.second }
 
                 ImpactCard(
                     title = "BENEFICIADOS",
@@ -429,24 +457,32 @@ fun ImpactCard(title: String, items: List<Pair<Participant, Int>>, color: Color,
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Text(title, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(), letterSpacing = 0.5.sp)
             Spacer(modifier = Modifier.height(10.dp))
-            items.forEach { (p, valToShow) ->
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(Color(0xFF24292E)), contentAlignment = Alignment.Center) {
-                        Text(p.ownerName.take(1).uppercase(), color = Color.White.copy(alpha = 0.7f), fontSize = 10.sp)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(p.ownerName, color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    
-                    if (usePoints) {
-                        Text("+${valToShow} pts", color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    } else {
-                        Icon(imageVector = if (valToShow > 0) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
-                        Text("${if (valToShow > 0) valToShow else -valToShow}", color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            
+            val scrollState = rememberScrollState()
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 160.dp)
+                    .verticalScroll(scrollState)
+            ) {
+                items.forEach { (p, valToShow) ->
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(Color(0xFF24292E)), contentAlignment = Alignment.Center) {
+                            Text(p.ownerName.take(1).uppercase(), color = Color.White.copy(alpha = 0.7f), fontSize = 10.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(p.ownerName, color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        
+                        if (usePoints) {
+                            Text("+${valToShow} pts", color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(imageVector = if (valToShow > 0) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
+                            Text("${if (valToShow > 0) valToShow else -valToShow}", color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
-            }
-            if (items.isEmpty()) {
-                Text("Sin cambios", color = Color.White.copy(alpha = 0.3f), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                if (items.isEmpty()) {
+                    Text("Sin cambios", color = Color.White.copy(alpha = 0.3f), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                }
             }
         }
     }
