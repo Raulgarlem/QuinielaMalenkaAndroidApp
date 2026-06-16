@@ -40,7 +40,7 @@ fun GroupStandingsView(
             }
         }
         
-        items(groups) { groupName ->
+        items(groups, key = { it }) { groupName ->
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 // User prediction header
                 val predictedWinner = userGroupWinners[groupName] ?: "-"

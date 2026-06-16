@@ -219,7 +219,7 @@ fun LoginDialog(userViewModel: UserViewModel, onDismiss: () -> Unit, onLogin: (S
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Nombre") },
+                    label = { Text("Nombre (Nickname)") },
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next)
                 )

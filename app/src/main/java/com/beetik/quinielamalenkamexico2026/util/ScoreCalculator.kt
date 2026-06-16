@@ -22,8 +22,11 @@ object ScoreCalculator {
 
         val matchesByGroup = allMatches.groupBy { it.group }
         
-        // 1. Determine real winners for finished groups
+        // 1. Determine real winners for fully finished groups
         val realGroupWinners = matchesByGroup.mapValues { (groupName, matches) ->
+            val allGroupFinished = matches.all { it.finished }
+            if (!allGroupFinished) return@mapValues null
+            
             val finishedMatchesInGroup = matches.filter { it.realHomeScore != null && it.realAwayScore != null }
             if (finishedMatchesInGroup.isEmpty()) return@mapValues null
             
@@ -47,26 +50,28 @@ object ScoreCalculator {
             table.keys.sortedWith(compareByDescending<String> { table[it] ?: 0 }.thenByDescending { goals[it] ?: 0 }).firstOrNull()
         }
 
-        // 2. Match points
+        // 2. Match points (Only for finished matches)
         allMatches.forEach { match ->
-            val rh = match.realHomeScore
-            val ra = match.realAwayScore
-            if (rh != null && ra != null) {
-                val pred = matchPreds[match.id]
-                val uh = pred?.homeScore?.toIntOrNull()
-                val ua = pred?.awayScore?.toIntOrNull()
-                
-                if (uh != null && ua != null) {
-                    if (uh == rh && ua == ra) {
-                        exacts++
-                        hits++
-                        points += 2
-                    } else {
-                        val rW = when { rh > ra -> 1; rh < ra -> 2; else -> 0 }
-                        val uW = when { uh > ua -> 1; uh < ua -> 2; else -> 0 }
-                        if (rW == uW) {
+            if (match.finished) {
+                val rh = match.realHomeScore
+                val ra = match.realAwayScore
+                if (rh != null && ra != null) {
+                    val pred = matchPreds[match.id]
+                    val uh = pred?.homeScore?.toIntOrNull()
+                    val ua = pred?.awayScore?.toIntOrNull()
+                    
+                    if (uh != null && ua != null) {
+                        if (uh == rh && ua == ra) {
+                            exacts++
                             hits++
-                            points += 1
+                            points += 2
+                        } else {
+                            val rW = when { rh > ra -> 1; rh < ra -> 2; else -> 0 }
+                            val uW = when { uh > ua -> 1; uh < ua -> 2; else -> 0 }
+                            if (rW == uW) {
+                                hits++
+                                points += 1
+                            }
                         }
                     }
                 }
@@ -75,8 +80,7 @@ object ScoreCalculator {
 
         // 3. Group winner points
         realGroupWinners.forEach { (group, realWinner) ->
-            val isGroupFinished = matchesByGroup[group]?.all { it.realHomeScore != null } == true
-            if (isGroupFinished && realWinner != null) {
+            if (realWinner != null) {
                 if (winnerPreds[group] == realWinner) {
                     points += 2
                 }

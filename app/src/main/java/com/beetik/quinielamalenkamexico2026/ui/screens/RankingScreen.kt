@@ -108,10 +108,20 @@ fun RankingScreen(
         }
     }
 
-    val scoresAndRanks by remember(isLiveRanking, selectedFilter, resultsMap.size, confirmedIds.size) {
+    val scoresAndRanks by remember(allMatches, baseParticipants.size, isLiveRanking, selectedFilter, resultsMap.size, confirmedIds.size) {
         derivedStateOf {
             val matchesByGroup = allMatches.groupBy { it.group }
             
+            // Optimization: Calculate group winners once per calculation, not per participant
+            val groupWinnersCache = matchesByGroup.keys.associateWith { gName ->
+                val gMatches = matchesByGroup[gName]!!
+                val hasResults = gMatches.any { getEffectiveScore(it, resultsMap) != null }
+                val isFinished = gMatches.all { getEffectiveScore(it, resultsMap) != null }
+                if (hasResults && (isFinished || isLiveRanking)) {
+                    getGroupWinner(gName, allMatches, resultsMap)?.first
+                } else null
+            }
+
             val scores = baseParticipants.associate { p ->
                 var pts = 0
                 allMatches.forEach { match ->
@@ -120,15 +130,20 @@ fun RankingScreen(
                         pts += calculatePoints(pred, actual)
                     }
                 }
-                matchesByGroup.forEach { (gName, gMatches) ->
-                    val hasResults = gMatches.any { getEffectiveScore(it, resultsMap) != null }
-                    val isFinished = gMatches.all { getEffectiveScore(it, resultsMap) != null }
-                    if (hasResults && (isFinished || isLiveRanking)) {
-                        val winner = getGroupWinner(gName, allMatches, resultsMap)?.first
-                        if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
-                    }
+                groupWinnersCache.forEach { (gName, winner) ->
+                    if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
                 }
                 p.id to pts
+            }
+
+            // Optimization: Calculate base group winners once
+            val confirmedResults = resultsMap.filterKeys { it in confirmedIds }
+            val baseGroupWinnersCache = matchesByGroup.keys.associateWith { gName ->
+                val gMatches = matchesByGroup[gName]!!
+                val allConfirmed = gMatches.all { it.id in confirmedIds }
+                if (allConfirmed) {
+                    getGroupWinner(gName, allMatches, confirmedResults)?.first
+                } else null
             }
 
             // Calculate base scores (Confirmed only)
@@ -142,13 +157,8 @@ fun RankingScreen(
                         }
                     }
                 }
-                matchesByGroup.forEach { (gName, gMatches) ->
-                    val allConfirmed = gMatches.all { it.id in confirmedIds }
-                    if (allConfirmed) {
-                        val confirmedResults = resultsMap.filterKeys { it in confirmedIds }
-                        val winner = getGroupWinner(gName, allMatches, confirmedResults)?.first
-                        if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
-                    }
+                baseGroupWinnersCache.forEach { (gName, winner) ->
+                    if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
                 }
                 p.id to pts
             }
@@ -226,6 +236,11 @@ fun RankingScreen(
             val matchHistoryRanks = mutableMapOf<String, Map<String, Int>>()
             val runningScores = baseParticipants.associate { it.id to 0 }.toMutableMap()
             
+            // Pre-calcular ganadores de grupo una sola vez
+            val allGroupWinners = matchesByGroup.keys.associateWith { gName ->
+                getGroupWinner(gName, allMatches, resultsMap)?.first
+            }
+
             allMatches.forEach { match ->
                 val result = getEffectiveScore(match, resultsMap)
                 if (result != null) {
@@ -233,9 +248,10 @@ fun RankingScreen(
                         val pred = p.predictions[match.id] ?: (0 to 0)
                         runningScores[p.id] = (runningScores[p.id] ?: 0) + calculatePoints(pred, result)
                     }
-                    val groupMatches = allMatches.filter { it.group == match.group }
+                    
+                    val groupMatches = matchesByGroup[match.group]!!
                     if (groupMatches.last().id == match.id && groupMatches.all { getEffectiveScore(it, resultsMap) != null }) {
-                        val winner = getGroupWinner(match.group, allMatches, resultsMap)?.first
+                        val winner = allGroupWinners[match.group]
                         if (winner != null) {
                             baseParticipants.forEach { p ->
                                 if (p.groupWinnerPredictions[match.group] == winner) {
@@ -244,25 +260,30 @@ fun RankingScreen(
                             }
                         }
                     }
-                    val currentOfficialScores = officialParticipants.associate { it.id to (runningScores[it.id] ?: 0) }
-                    val sortedOfficialPoints = currentOfficialScores.values.distinct().sortedByDescending { it }
-                    val scoreToRankAtStep = sortedOfficialPoints.withIndex().associate { it.value to it.index + 1 }
-                    val ranksStep = mutableMapOf<String, Int>()
-                    officialParticipants.forEach { p ->
-                        ranksStep[p.id] = scoreToRankAtStep[runningScores[p.id] ?: 0] ?: 1
-                    }
-                    baseParticipants.filter { it.id.startsWith("loaded_") }.forEach { lp ->
-                        val score = runningScores[lp.id] ?: 0
-                        val matchScore = sortedOfficialPoints.firstOrNull { it <= score }
-                        ranksStep[lp.id] = if (matchScore != null) {
-                            scoreToRankAtStep[matchScore] ?: 1
-                        } else {
-                            sortedOfficialPoints.size + 1
+                    
+                    // Encontrar los dos puntajes más altos de los participantes oficiales
+                    var max1 = -1
+                    var max2 = -1
+                    officialParticipants.forEach { op ->
+                        val s = runningScores[op.id] ?: 0
+                        if (s > max1) {
+                            max2 = max1
+                            max1 = s
+                        } else if (s > max2 && s < max1) {
+                            max2 = s
                         }
+                    }
+
+                    val ranksStep = mutableMapOf<String, Int>()
+                    baseParticipants.forEach { p ->
+                        val score = runningScores[p.id] ?: 0
+                        if (score == max1 && max1 != -1) ranksStep[p.id] = 1
+                        else if (score == max2 && max2 != -1) ranksStep[p.id] = 2
                     }
                     matchHistoryRanks[match.id] = ranksStep
                 }
             }
+
             listOf(scores, ranks, baseRanks, matchHistoryRanks)
         }
     }
@@ -272,7 +293,7 @@ fun RankingScreen(
     val baseRanks = scoresAndRanks[2] as Map<String, Int>
     val matchHistoryRanks = scoresAndRanks[3] as Map<String, Map<String, Int>>
 
-    val filteredParticipants by remember(selectedFilter, searchQuery) {
+    val filteredParticipants by remember(selectedFilter, searchQuery, currentScores, baseParticipants.size) {
         derivedStateOf {
             val scores = currentScores
             val users = baseParticipants.filter { it.isUser }
@@ -353,7 +374,7 @@ fun RankingScreen(
             .toSet()
     }
 
-    val cardsScoresAndRanks by remember(isLiveRanking, selectedCardsDate, baseParticipants.size, resultsMap.size, showOnlyDayPoints) {
+    val cardsScoresAndRanks by remember(allMatches, isLiveRanking, selectedCardsDate, baseParticipants.size, resultsMap.size, showOnlyDayPoints) {
         derivedStateOf {
             val matchesForCalculation = if (showOnlyDayPoints) {
                 allMatches.filter { it.date == selectedCardsDate }

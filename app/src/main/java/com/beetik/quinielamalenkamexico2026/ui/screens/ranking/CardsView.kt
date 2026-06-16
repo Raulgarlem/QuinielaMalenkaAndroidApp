@@ -58,7 +58,7 @@ import kotlin.math.roundToInt
 fun CardsView(
     allMatches: List<Match>,
     dayMatches: List<Match>, 
-    participants: List<Participant>, 
+    participants: List<Participant>,
     resultsMap: Map<String, MatchScore>, 
     scores: Map<String, Int>, 
     ranks: Map<String, Int>,
@@ -150,12 +150,35 @@ fun CardsView(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(dayMatches, key = { it.id }) { match ->
+                val actualInMap = resultsMap[match.id]
+                val effectiveScore = actualInMap ?: if (match.started) match.realHomeScore?.let { h -> match.realAwayScore?.let { a -> MatchScore(h, a) } } else null
+                
+                val stats = remember(effectiveScore, participants) {
+                    if (effectiveScore != null) {
+                        val counts = mutableMapOf(2 to 0, 1 to 0, 0 to 0)
+                        participants.forEach { p ->
+                            val pred = p.predictions[match.id]
+                            if (pred != null) {
+                                val pts = calculatePoints(pred, effectiveScore)
+                                counts[pts] = (counts[pts] ?: 0) + 1
+                            } else {
+                                counts[0] = (counts[0] ?: 0) + 1
+                            }
+                        }
+                        counts
+                    } else null
+                }
+
                 MatchCard(
                     match = match,
-                    actualInMap = resultsMap[match.id],
+                    actualInMap = actualInMap,
                     isConfirmed = confirmedIds.contains(match.id),
                     onSimularMatch = { onSimularMatch(match) },
-                    onClearSimulation = { onClearSimulation(match) }
+                    onClearSimulation = { onClearSimulation(match) },
+                    points2 = stats?.get(2) ?: 0,
+                    points1 = stats?.get(1) ?: 0,
+                    points0 = stats?.get(0) ?: 0,
+                    showStats = stats != null
                 )
             }
 
@@ -333,7 +356,11 @@ fun MatchCard(
     actualInMap: MatchScore?,
     isConfirmed: Boolean,
     onSimularMatch: () -> Unit,
-    onClearSimulation: () -> Unit
+    onClearSimulation: () -> Unit,
+    points2: Int = 0,
+    points1: Int = 0,
+    points0: Int = 0,
+    showStats: Boolean = false
 ) {
     val isLive = match.started && match.isActive
     val isFinished = match.finished
@@ -395,6 +422,18 @@ fun MatchCard(
             )
             Text(effectiveScore?.let { "${it.home}-${it.away}" } ?: "-", color = scoreColor, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
 
+            if (showStats) {
+                Row(
+                    modifier = Modifier.padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StatLabel(2, points2)
+                    StatLabel(1, points1)
+                    StatLabel(0, points0)
+                }
+            }
+
             Spacer(modifier = Modifier.height(2.dp))
             Text("${match.time} hrs", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
 
@@ -431,6 +470,21 @@ fun MatchCard(
                 Text(if (canSimulate) "Simular" else "Finalizado", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
             }
         }
+    }
+}
+
+@Composable
+fun StatLabel(points: Int, count: Int) {
+    val color = getPointColor(points)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(modifier = Modifier.width(2.dp))
+        Text(text = count.toString(), color = Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
     }
 }
 

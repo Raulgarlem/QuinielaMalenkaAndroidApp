@@ -156,17 +156,27 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
                         if (match.realHomeScore != null && match.realAwayScore != null) {
                             val realScore = MatchScore(match.realHomeScore, match.realAwayScore)
                             
-                            // Ya no sobreescribimos resultsMap automáticamente para partidos en vivo
-                            // solo para partidos FINALIZADOS para "confirmarlos" si no estaban
-                            if (isFinished && resultsMap[match.id] != realScore) {
-                                Log.d("RankingViewModel", "Confirming finished match ${match.id}: ${realScore.home}-${realScore.away}")
-                                resultsMap[match.id] = realScore
+                            // Si el partido está FINALIZADO, sincronizamos con resultsMap y confirmedIds
+                            if (isFinished) {
+                                var changed = false
+                                if (resultsMap[match.id] != realScore) {
+                                    Log.d("RankingViewModel", "Updating finished match ${match.id}: ${realScore.home}-${realScore.away}")
+                                    resultsMap[match.id] = realScore
+                                    changed = true
+                                }
+                                if (!confirmedIds.contains(match.id)) {
+                                    confirmedIds.add(match.id)
+                                    changed = true
+                                }
+                                if (changed) saveCurrentState()
                             }
 
-                            if (isFinished && !confirmedIds.contains(match.id)) {
-                                confirmedIds.add(match.id)
-                            } else if (isLive && confirmedIds.contains(match.id)) {
+                            // Si el partido volvió a estar en VIVO pero estaba como confirmado, lo quitamos de confirmados
+                            if (isLive && confirmedIds.contains(match.id)) {
                                 confirmedIds.remove(match.id)
+                                // Opcionalmente podríamos quitarlo de resultsMap si queremos que use el real-time puro
+                                // pero si el usuario lo simuló, quizá quiera mantener su simulación.
+                                // Por ahora solo quitamos la "confirmación" para que el cálculo base lo ignore.
                             }
                         }
                     }

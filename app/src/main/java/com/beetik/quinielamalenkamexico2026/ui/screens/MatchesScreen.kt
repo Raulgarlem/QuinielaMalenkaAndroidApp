@@ -417,8 +417,8 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
                     if (!isLandscape) Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                GroupStandingsView(
-                    allMatches = if (searchQuery.isNotBlank()) {
+                val standingsMatches = remember(searchQuery, selectedStandingsGroupIndex, allMatches) {
+                    if (searchQuery.isNotBlank()) {
                         val query = searchQuery.normalize()
                         val relevantGroups = allMatches.filter { 
                             it.homeTeam.normalize().contains(query) || it.awayTeam.normalize().contains(query)
@@ -428,7 +428,11 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
                         allMatches
                     } else {
                         allMatches.filter { it.group == standingsGroups[selectedStandingsGroupIndex] }
-                    },
+                    }
+                }
+
+                GroupStandingsView(
+                    allMatches = standingsMatches,
                     resultsMap = convertedResults,
                     userGroupWinners = userGroupWinners,
                     headerContent = null // Ya no pasamos el header aquí para que no haga scroll

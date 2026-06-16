@@ -63,6 +63,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.beetik.quinielamalenkamexico2026.ui.UserViewModel
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.runtime.saveable.Saver
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,12 +91,44 @@ fun QuinielaScreen(
     val firestore = remember {
         FirebaseFirestore.getInstance()
     }
+
+    val database = remember { QuinielaDatabase.getDatabase(context) }
+    val gson = remember { Gson() }
+
+    // Savers for rememberSaveable
+    val matchResultsSaver = remember {
+        Saver<Map<String, MatchResult>, Map<String, List<String>>>(
+            save = { map -> map.mapValues { listOf(it.value.homeScore, it.value.awayScore) } },
+            restore = { saved -> saved.mapValues { MatchResult(it.value[0], it.value[1]) } }
+        )
+    }
+
+    val groupWinnersSaver = remember {
+        Saver<Map<String, String>, Map<String, String>>(
+            save = { it },
+            restore = { it }
+        )
+    }
+
+    val quinielaEntitySaver = remember(gson) {
+        Saver<MutableState<QuinielaEntity?>, String>(
+            save = { state -> if (state.value == null) "" else gson.toJson(state.value) },
+            restore = { json -> mutableStateOf(if (json.isEmpty()) null else gson.fromJson(json, QuinielaEntity::class.java)) }
+        )
+    }
+
+    val savedQuinielasSaver = remember(gson) {
+        Saver<List<QuinielaEntity>, String>(
+            save = { list -> gson.toJson(list) },
+            restore = { json -> gson.fromJson(json, object : TypeToken<List<QuinielaEntity>>() {}.type) }
+        )
+    }
     
-    var matchResults by remember {
+    var matchResults by rememberSaveable(stateSaver = matchResultsSaver) {
         mutableStateOf(allMatches.associate { it.id to MatchResult() })
     }
 
-    var groupWinners by remember {
+    var groupWinners by rememberSaveable(stateSaver = groupWinnersSaver) {
         mutableStateOf<Map<String, String>>(emptyMap())
     }
 
@@ -104,28 +137,30 @@ fun QuinielaScreen(
     var userEmail by rememberSaveable { mutableStateOf("") }
     var quinielaCode by rememberSaveable { mutableStateOf("") }
     var isSentByServer by rememberSaveable { mutableStateOf(false) }
-    var showValidationErrors by remember { mutableStateOf(false) }
+    var showValidationErrors by rememberSaveable { mutableStateOf(false) }
 
-    var showLoadDialog by remember { mutableStateOf(false) }
-    var showEmailDialog by remember { mutableStateOf(false) }
-    var targetEmailToLoad by remember { mutableStateOf("") }
-    var isFetchingQuinielas by remember { mutableStateOf(false) }
-    var showClearAllDialog by remember { mutableStateOf(false) }
-    var showOverwriteDialog by remember { mutableStateOf(false) }
-    var showSendConfirmDialog by remember { mutableStateOf(false) }
-    var savedQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
-    var quinielaToDeleteLocal by remember { mutableStateOf<QuinielaEntity?>(null) }
-    var quinielaToDeleteServer by remember { mutableStateOf<QuinielaEntity?>(null) }
-    var showDeleteOptions by remember { mutableStateOf<QuinielaEntity?>(null) }
+    var showLoadDialog by rememberSaveable { mutableStateOf(false) }
+    var showEmailDialog by rememberSaveable { mutableStateOf(false) }
+    var targetEmailToLoad by rememberSaveable { mutableStateOf("") }
+    var isFetchingQuinielas by rememberSaveable { mutableStateOf(false) }
+    var showClearAllDialog by rememberSaveable { mutableStateOf(false) }
+    var showOverwriteDialog by rememberSaveable { mutableStateOf(false) }
+    var showSendConfirmDialog by rememberSaveable { mutableStateOf(false) }
+    var savedQuinielas by rememberSaveable(stateSaver = savedQuinielasSaver) { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
+    var quinielaToDeleteLocal by rememberSaveable(saver = quinielaEntitySaver) { mutableStateOf<QuinielaEntity?>(null) }
+    var quinielaToDeleteServer by rememberSaveable(saver = quinielaEntitySaver) { mutableStateOf<QuinielaEntity?>(null) }
+    var showDeleteOptions by rememberSaveable(saver = quinielaEntitySaver) { mutableStateOf<QuinielaEntity?>(null) }
 
-    val database = remember { QuinielaDatabase.getDatabase(context) }
-    val gson = remember { Gson() }
-
-    var originalData by remember { mutableStateOf<QuinielaEntity?>(null) }
-    var currentId by remember { mutableStateOf(quinielaId) }
-    var isDataLoaded by remember { mutableStateOf(false) }
+    var originalData by rememberSaveable(saver = quinielaEntitySaver) { mutableStateOf<QuinielaEntity?>(null) }
+    var currentId by rememberSaveable { mutableStateOf(quinielaId) }
+    var isDataLoaded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(quinielaId) {
+        // Avoid reloading if we already have data (e.g., after a rotation)
+        if (isDataLoaded && (currentId == quinielaId || (quinielaId == -1 && currentId != -1))) {
+            return@LaunchedEffect
+        }
+
         if (quinielaId != -1) {
             withContext(Dispatchers.IO) {
                 val entity = database.quinielaDao().getQuinielaById(quinielaId)

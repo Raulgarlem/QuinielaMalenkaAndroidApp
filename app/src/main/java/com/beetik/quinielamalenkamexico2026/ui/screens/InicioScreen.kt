@@ -52,7 +52,6 @@ fun InicioScreen(
     val gson = remember { Gson() }
     val allMatches = rankingViewModel.allMatches
     val groupCount = remember(allMatches) { allMatches.groupBy { it.group }.size }
-    
     val officialParticipants = rankingViewModel.baseParticipants.filter { !it.id.startsWith("loaded_") }
     
     var savedQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
@@ -114,90 +113,63 @@ fun InicioScreen(
         listOf(Triple(allMatches.last(), allMatches.last().time, "Final"))
     }
 
-    // --- Lógica de Estadísticas y Ranking ---
-    val statsInfo = remember(selectedQuiniela, officialParticipants, allMatches) {
-        val totalParticipantsGeneral = officialParticipants.size
+    // --- Lógica de Estadísticas ---
+    val statsInfo = remember(selectedQuiniela, allMatches, officialParticipants) {
+        val currentQ = selectedQuiniela ?: return@remember null
 
         val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
+        val winnersType = object : TypeToken<Map<String, String>>() {}.type
         
-        // 1. Determinar ganadores reales de grupos finalizados
-        val matchesByGroup = allMatches.groupBy { it.group }
-        val realGroupWinners = matchesByGroup.mapValues { (groupName, matches) ->
-            val finishedMatchesInGroup = matches.filter { it.realHomeScore != null && it.realAwayScore != null }
-            if (finishedMatchesInGroup.isEmpty()) return@mapValues null
-            
-            val table = mutableMapOf<String, Int>()
-            val goals = mutableMapOf<String, Int>()
-            
-            finishedMatchesInGroup.forEach { m ->
-                val h = m.realHomeScore!!
-                val a = m.realAwayScore!!
-                goals[m.homeTeam] = (goals[m.homeTeam] ?: 0) + h
-                goals[m.awayTeam] = (goals[m.awayTeam] ?: 0) + a
-                when {
-                    h > a -> table[m.homeTeam] = (table[m.homeTeam] ?: 0) + 3
-                    h < a -> table[m.awayTeam] = (table[m.awayTeam] ?: 0) + 3
-                    else -> {
-                        table[m.homeTeam] = (table[m.homeTeam] ?: 0) + 1
-                        table[m.awayTeam] = (table[m.awayTeam] ?: 0) + 1
-                    }
-                }
-            }
-            table.keys.sortedWith(compareByDescending<String> { table[it] ?: 0 }.thenByDescending { goals[it] ?: 0 }).firstOrNull()
+        // 1. Obtener predicciones de la quiniela seleccionada
+        val userMatchPreds: Map<String, MatchResult> = try { 
+            gson.fromJson(currentQ.resultsJson, resultsType) 
+        } catch (_: Exception) { emptyMap() }
+        
+        val userWinnerPreds: Map<String, String> = try { 
+            gson.fromJson(currentQ.winnersJson, winnersType) 
+        } catch (_: Exception) { emptyMap() }
+        
+        // 2. Calcular puntos usando el ScoreCalculator (usa resultados reales de allMatches)
+        val currentStats = ScoreCalculator.calculateStats(allMatches, userMatchPreds, userWinnerPreds)
+        val currentPoints = currentStats.totalPoints
+
+        // 3. Calcular puntos de todos los oficiales para determinar posición
+        val officialScores = officialParticipants.map { p ->
+            val pPreds = p.predictions.mapValues { (_, v) -> MatchResult(v.first.toString(), v.second.toString()) }
+            ScoreCalculator.calculateStats(allMatches, pPreds, p.groupWinnerPredictions).totalPoints
         }
 
-        // 1. Calcular puntos de la quiniela seleccionada
-        val currentQ = selectedQuiniela
-        val userMatchPreds: Map<String, MatchResult> = if (currentQ != null) {
-            try { gson.fromJson(currentQ.resultsJson, resultsType) } catch (_: Exception) { emptyMap() }
-        } else emptyMap()
-        val userWinnerPreds: Map<String, String> = if (currentQ != null) {
-            val winnersType = object : TypeToken<Map<String, String>>() {}.type
-            try { gson.fromJson(currentQ.winnersJson, winnersType) } catch (_: Exception) { emptyMap() }
-        } else emptyMap()
+        val betterCount = officialScores.count { it > currentPoints }
+        val positionReal = betterCount + 1
         
-        val currentStats = ScoreCalculator.calculateStats(allMatches, userMatchPreds, userWinnerPreds)
+        val distinctScores = officialScores.distinct().sortedDescending()
+        val positionTabla = (distinctScores.indexOfFirst { it <= currentPoints }.takeIf { it != -1 } ?: distinctScores.size) + 1
         
-        // 2. Calcular puntos de los participantes oficiales de la tabla general
-        val officialScores = officialParticipants.map { participant ->
-            val participantPreds = participant.predictions.mapValues { (_, v) ->
-                MatchResult(v.first.toString(), v.second.toString())
-            }
-            ScoreCalculator.calculateStats(allMatches, participantPreds, participant.groupWinnerPredictions).totalPoints
-        }
-        
-        // 3. Determinar posición (Igual que en RankingScreen para quinielas añadidas)
-        val officialScoreToRank = officialScores.distinct().sortedByDescending { it }
-            .withIndex().associate { it.value to it.index + 1 }
-            
-        val rank = if (currentQ != null) {
-            val score = currentStats.totalPoints
-            val matchScore = officialScoreToRank.keys.firstOrNull { it <= score }
-            if (matchScore != null) {
-                officialScoreToRank[matchScore] ?: 1
-            } else {
-                officialScoreToRank.size + 1
-            }
-        } else 0
-        
-        // 4. Efectividad (Puntos reales * 100 / Puntos máximos posibles hasta ahora)
-        val finishedMatches = allMatches.count { it.realHomeScore != null }
-        val finishedGroups = matchesByGroup.count { (group, matches) -> matches.all { it.realHomeScore != null } }
+        val totalOfficial = officialScores.size
+
+        // 4. Calcular efectividad basada en el progreso real del torneo
+        val matchesByGroup = allMatches.groupBy { it.group }
+        val finishedMatches = allMatches.count { it.finished }
+        val finishedGroups = matchesByGroup.count { (group, matches) -> matches.all { it.finished } }
         val maxPointsPossible = (finishedMatches * 2) + (finishedGroups * 2)
 
-        val effectiveness = if (maxPointsPossible > 0) (currentStats.totalPoints.toFloat() / maxPointsPossible * 100).toInt() else 0
+        val effectiveness = if (maxPointsPossible > 0) (currentPoints.toFloat() / maxPointsPossible * 100).toInt() else 0
         
         object {
-            val points = currentStats.totalPoints
+            val points = currentPoints
             val hits = currentStats.hits
             val exacts = currentStats.exacts
             val eff = effectiveness
-            val position = rank
-            val total = totalParticipantsGeneral
+            val posReal = positionReal
+            val posTabla = positionTabla
+            val total = totalOfficial
+            val matches = finishedMatches
+            val totalMatches = allMatches.size
+            val maxPoints = maxPointsPossible
         }
     }
 
-    val selectedQuinielaStatus = remember(selectedQuiniela, statsInfo) {
+    val selectedQuinielaStatus = remember(selectedQuiniela) {
         val quiniela = selectedQuiniela ?: return@remember Triple("Borrador", Color(0xFF9C27B0), false)
         
         val isComplete = try {
@@ -252,7 +224,7 @@ fun InicioScreen(
                 title = {
                     Text(
                         "QUINIELA MALENKA 2026",
-                        style = if (isLandscape) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         color = Gold
                     )
@@ -260,13 +232,13 @@ fun InicioScreen(
                 actions = {
                     IconButton(
                         onClick = { },
-                        modifier = if (isLandscape) Modifier.size(32.dp) else Modifier
+                        modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
                             Icons.Default.Notifications, 
                             contentDescription = "Notifications", 
                             tint = Gold,
-                            modifier = if (isLandscape) Modifier.size(20.dp) else Modifier.size(24.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 },
@@ -276,7 +248,7 @@ fun InicioScreen(
                     navigationIconContentColor = Gold,
                     actionIconContentColor = Gold
                 ),
-                windowInsets = if (isLandscape) WindowInsets(0) else TopAppBarDefaults.windowInsets
+                windowInsets = WindowInsets(0)
             )
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -285,12 +257,12 @@ fun InicioScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(
-                    top = if (isLandscape) 40.dp else innerPadding.calculateTopPadding(),
-                    bottom = innerPadding.calculateBottomPadding(),
+                    top = if (isLandscape) 24.dp else 56.dp,
+                    bottom = 12.dp,
                     start = 16.dp,
                     end = 16.dp
                 ),
-            verticalArrangement = Arrangement.spacedBy(if (isLandscape) 8.dp else 16.dp)
+            verticalArrangement = Arrangement.spacedBy(if (isLandscape) 8.dp else 10.dp)
         ) {
             item {
                 Column {
@@ -310,12 +282,12 @@ fun InicioScreen(
             item {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     SummaryCard(
-                        title = "MI QUINIELAS OFICIAL",
+                        title = "MI QUINIELA",
                         subtitle = selectedQuiniela?.quinielaName ?: "(Sin Quiniela)",
                         status = selectedQuinielaStatus.first,
                         statusColor = selectedQuinielaStatus.second,
                         points = "${statsInfo?.points ?: 0} pts",
-                        rank = if (statsInfo != null) "#${statsInfo.position} de ${statsInfo.total}" else "-",
+                        rank = if (statsInfo != null) "${statsInfo.posReal} / ${statsInfo.total}" else "-",
                         isOfficial = selectedQuiniela?.isFavorite ?: false,
                         onSelectorClick = { showQuinielaDropdown = true }
                     )
@@ -385,11 +357,16 @@ fun InicioScreen(
             
             item {
                 StatsCard(
-                    position = if (statsInfo != null) "#${statsInfo.position}" else "-",
-                    total = if (statsInfo != null) "de ${statsInfo.total}" else "",
+                    posReal = if (statsInfo != null) "${statsInfo.posReal}" else "-",
+                    total = if (statsInfo != null) "/ ${statsInfo.total}" else "",
+                    posTabla = if (statsInfo != null) "${statsInfo.posTabla}" else "-",
                     hits = "${statsInfo?.hits ?: 0}",
                     exacts = "${statsInfo?.exacts ?: 0}",
-                    efficiency = "${statsInfo?.eff ?: 0}%"
+                    efficiency = "${statsInfo?.eff ?: 0}%",
+                    matches = if (statsInfo != null) "${statsInfo.matches}" else "-",
+                    totalMatches = if (statsInfo != null) "/ ${statsInfo.totalMatches}" else "",
+                    points = if (statsInfo != null) "${statsInfo.points}" else "0",
+                    maxPoints = if (statsInfo != null) "/ ${statsInfo.maxPoints}" else ""
                 )
             }
         }
@@ -412,7 +389,7 @@ fun SummaryCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         onClick = onSelectorClick
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -424,35 +401,36 @@ fun SummaryCard(
                             painter = painterResource(id = android.R.drawable.star_on),
                             contentDescription = null,
                             tint = Gold,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                     }
-                    Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text(title, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                 }
-                Icon(Icons.Default.ArrowDropDown, contentDescription = "Cambiar quiniela", tint = Gold)
+                Icon(Icons.Default.ArrowDropDown, contentDescription = "Cambiar quiniela", tint = Gold, modifier = Modifier.size(20.dp))
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(subtitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(subtitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
-                    Text("Estado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Estado", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
                     Text(
                         status, 
                         color = statusColor,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
                     )
                 }
                 Column {
-                    Text("Puntaje", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(points, fontWeight = FontWeight.Bold)
+                    Text("Puntaje", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                    Text(points, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
                 Column {
-                    Text("Posición", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(rank, fontWeight = FontWeight.Bold)
+                    Text("Posición", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                    Text(rank, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
         }
@@ -506,26 +484,57 @@ fun MatchPreviewCard(match: Match, displayDate: String, displayTime: String) {
 
 @Composable
 fun StatsCard(
-    position: String,
+    posReal: String,
     total: String,
+    posTabla: String,
     hits: String,
     exacts: String,
-    efficiency: String
+    efficiency: String,
+    matches: String,
+    totalMatches: String,
+    points: String,
+    maxPoints: String
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceAround
-        ) {
-            StatItem("Posición actual", position, total)
-            StatItem("Aciertos", hits, "")
-            StatItem("Exactos", exacts, "")
-            StatItem("Efectividad", efficiency, "")
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    StatItem("Posición real", posReal, total)
+                    StatItem("Aciertos", hits, "")
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    StatItem("En la tabla", posTabla, "")
+                    StatItem("Exactos", exacts, "")
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    StatItem("Partidos", matches, totalMatches)
+                    StatItem("Puntaje", points, maxPoints)
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                StatItem("Efectividad", efficiency, "")
+            }
         }
     }
 }
@@ -533,10 +542,13 @@ fun StatsCard(
 @Composable
 fun StatItem(label: String, value: String, subValue: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        if (subValue.isNotEmpty()) {
-            Text(subValue, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            if (subValue.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(subValue, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

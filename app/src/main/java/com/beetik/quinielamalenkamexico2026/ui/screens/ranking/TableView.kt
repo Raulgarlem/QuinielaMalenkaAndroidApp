@@ -242,7 +242,9 @@ fun TableView(
                                 Box(modifier = Modifier.width(100.dp))
                             }
                             scrollableParticipants.forEach { p ->
-                                PredictionCell(p, match, actual, matchHistoryRanks)
+                                key(p.id) {
+                                    PredictionCell(p, match, actual, matchHistoryRanks)
+                                }
                             }
                         }
                     }
@@ -272,7 +274,9 @@ fun TableView(
                                     Box(modifier = Modifier.width(100.dp))
                                 }
                                 scrollableParticipants.forEach { p ->
-                                    GroupWinnerPredictionCell(p, match.group, actualWinner?.first, showWinnerResult)
+                                    key(p.id) {
+                                        GroupWinnerPredictionCell(p, match.group, actualWinner?.first, showWinnerResult)
+                                    }
                                 }
                             }
                         }
@@ -294,7 +298,9 @@ fun TableView(
                         Box(modifier = Modifier.width(100.dp))
                     }
                     scrollableParticipants.forEach { p ->
-                        Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) { Text((scores[p.id] ?: 0).toString(), color = Color.White, fontSize = if (isLandscape) 11.sp else 12.sp, fontWeight = FontWeight.Bold) }
+                        key(p.id) {
+                            Box(modifier = Modifier.width(80.dp), contentAlignment = Alignment.Center) { Text((scores[p.id] ?: 0).toString(), color = Color.White, fontSize = if (isLandscape) 11.sp else 12.sp, fontWeight = FontWeight.Bold) }
+                        }
                     }
                 }
             }
@@ -310,7 +316,9 @@ fun TableView(
                         Box(modifier = Modifier.width(100.dp))
                     }
                     scrollableParticipants.forEach { p ->
-                        RankBadge(ranks[p.id] ?: 1, p.id.startsWith("loaded_"))
+                        key(p.id) {
+                            RankBadge(ranks[p.id] ?: 1, p.id.startsWith("loaded_"))
+                        }
                     }
                 }
             }

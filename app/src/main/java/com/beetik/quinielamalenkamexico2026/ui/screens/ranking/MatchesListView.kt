@@ -47,7 +47,7 @@ fun MatchesListView(
             }
         }
         
-        items(filteredMatches) { match ->
+        items(filteredMatches, key = { it.id }) { match ->
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 val result = matchResults[match.id]
                 

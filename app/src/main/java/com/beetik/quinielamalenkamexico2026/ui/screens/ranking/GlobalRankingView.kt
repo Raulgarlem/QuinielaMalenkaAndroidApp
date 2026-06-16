@@ -91,6 +91,37 @@ fun GlobalRankingView(
         val featuredIds = matchesToShow.map { it.id }.toSet()
 
         fun calculateScoped(useFeatured: Boolean): Triple<Map<String, Int>, Map<String, Int>, Map<String, Int>> {
+            // Pre-calculate group winners for this scope
+            val groups = allMatches.groupBy { it.group }
+            val groupWinnersForScope = groups.keys.associateWith { gName ->
+                val gMatches = groups[gName]!!
+                val gMatchesInTimeline = gMatches.filter { timelineIds.contains(it.id) }
+                
+                val allHaveResults = gMatches.all { m ->
+                    val isFeatured = featuredIds.contains(m.id)
+                    if (isFeatured) {
+                        if (useFeatured) getEffectiveScore(m, resultsMap) != null else false
+                    } else {
+                        getEffectiveScore(m, resultsMap) != null
+                    }
+                }
+                
+                if (allHaveResults) {
+                    @Suppress("UNCHECKED_CAST")
+                    val scopedResults = gMatches.associate { m ->
+                        val isFeatured = featuredIds.contains(m.id)
+                        val score = if (isFeatured) {
+                            if (useFeatured) getEffectiveScore(m, resultsMap) else null
+                        } else {
+                            getEffectiveScore(m, resultsMap)
+                        }
+                        m.id to score
+                    }.filterValues { it != null } as Map<String, MatchScore>
+                    
+                    getGroupWinner(gName, allMatches, scopedResults)?.first
+                } else null
+            }
+
             val scores = officialParticipants.associate { p ->
                 var pts = 0
                 timelineMatches.forEach { match ->
@@ -106,36 +137,8 @@ fun GlobalRankingView(
                     }
                 }
                 
-                allMatches.groupBy { it.group }.forEach { (gName, gMatches) ->
-                    val gMatchesInTimeline = gMatches.filter { timelineIds.contains(it.id) }
-                    if (gMatchesInTimeline.isNotEmpty()) {
-                        // Para puntos de grupo, verificamos si todos los partidos del grupo tienen marcador "efectivo"
-                        val allHaveResults = gMatches.all { m ->
-                            val isFeatured = featuredIds.contains(m.id)
-                            if (isFeatured) {
-                                if (useFeatured) getEffectiveScore(m, resultsMap) != null else false
-                            } else {
-                                getEffectiveScore(m, resultsMap) != null
-                            }
-                        }
-                        
-                        if (allHaveResults) {
-                            // Necesitamos filtrar resultsMap para getGroupWinner para que use la lógica scoped
-                            @Suppress("UNCHECKED_CAST")
-                            val scopedResults = gMatches.associate { m ->
-                                val isFeatured = featuredIds.contains(m.id)
-                                val score = if (isFeatured) {
-                                    if (useFeatured) getEffectiveScore(m, resultsMap) else null
-                                } else {
-                                    getEffectiveScore(m, resultsMap)
-                                }
-                                m.id to score
-                            }.filterValues { it != null } as Map<String, MatchScore>
-                            
-                            val winner = getGroupWinner(gName, allMatches, scopedResults)?.first
-                            if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
-                        }
-                    }
+                groupWinnersForScope.forEach { (gName, winner) ->
+                    if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
                 }
                 p.id to pts
             }

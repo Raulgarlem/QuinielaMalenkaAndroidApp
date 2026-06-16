@@ -22,7 +22,7 @@ object MatchRepository {
         "Francia" to "🇫🇷", "Senegal" to "🇸🇳", "Irak" to "🇮🇶", "Noruega" to "🇳🇴",
         "Argentina" to "🇦🇷", "Austria" to "🇦🇹", "Jordania" to "🇯🇴", "Argelia" to "🇩🇿",
         "Portugal" to "🇵🇹", "Congo DR" to "🇨🇩", "Uzbekistán" to "🇺🇿", "Colombia" to "🇨🇴",
-        "Inglaterra" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Croacia" to "🇭🇷", "Ghana" to "🇭🇭", "Panamá" to "🇵🇦",
+        "Inglaterra" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Croacia" to "🇭🇷", "Ghana" to "🇬🇭", "Panamá" to "🇵🇦",
     )
 
     fun getFlag(country: String) = countryFlags[country] ?: "🏳️"
