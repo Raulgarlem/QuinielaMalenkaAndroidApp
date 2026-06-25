@@ -25,7 +25,12 @@ object MatchRepository {
         "Inglaterra" to "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Croacia" to "🇭🇷", "Ghana" to "🇬🇭", "Panamá" to "🇵🇦",
     )
 
-    fun getFlag(country: String) = countryFlags[country] ?: "🏳️"
+    fun getFlag(country: String): String {
+        val normalized = country.trim()
+        return countryFlags[normalized] 
+            ?: countryFlags.entries.find { it.key.equals(normalized, ignoreCase = true) }?.value 
+            ?: "🏳️"
+    }
 
     val allMatches = listOf(
         // Grupo A
@@ -111,69 +116,196 @@ object MatchRepository {
         Match("L3", "Grupo L", "2026-06-23", "14:00", "Inglaterra", getFlag("Inglaterra"), "Ghana", getFlag("Ghana")),
         Match("L4", "Grupo L", "2026-06-23", "17:00", "Panamá", getFlag("Panamá"), "Croacia", getFlag("Croacia")),
         Match("L5", "Grupo L", "2026-06-27", "15:00", "Panamá", getFlag("Panamá"), "Inglaterra", getFlag("Inglaterra")),
-        Match("L6", "Grupo L", "2026-06-27", "15:00", "Croacia", getFlag("Croacia"), "Ghana", getFlag("Ghana"))
+        Match("L6", "Grupo L", "2026-06-27", "15:00", "Croacia", getFlag("Croacia"), "Ghana", getFlag("Ghana")),
+
+        // Eliminatorias - 16avos de Final (Round of 32)
+        Match("R32_1", "16avos de Final", "2026-06-28", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_2", "16avos de Final", "2026-06-28", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_3", "16avos de Final", "2026-06-29", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_4", "16avos de Final", "2026-06-29", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_5", "16avos de Final", "2026-06-30", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_6", "16avos de Final", "2026-06-30", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_7", "16avos de Final", "2026-07-01", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_8", "16avos de Final", "2026-07-01", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_9", "16avos de Final", "2026-07-02", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_10", "16avos de Final", "2026-07-02", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_11", "16avos de Final", "2026-07-03", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_12", "16avos de Final", "2026-07-03", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_13", "16avos de Final", "2026-07-03", "20:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_14", "16avos de Final", "2026-07-04", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_15", "16avos de Final", "2026-07-04", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R32_16", "16avos de Final", "2026-07-04", "20:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+
+        // Octavos de Final (Round of 16)
+        Match("R16_1", "Octavos de Final", "2026-07-05", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R16_2", "Octavos de Final", "2026-07-05", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R16_3", "Octavos de Final", "2026-07-06", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R16_4", "Octavos de Final", "2026-07-06", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R16_5", "Octavos de Final", "2026-07-07", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R16_6", "Octavos de Final", "2026-07-07", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R16_7", "Octavos de Final", "2026-07-08", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("R16_8", "Octavos de Final", "2026-07-08", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+
+        // Cuartos de Final
+        Match("QF_1", "Cuartos de Final", "2026-07-09", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("QF_2", "Cuartos de Final", "2026-07-09", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("QF_3", "Cuartos de Final", "2026-07-10", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("QF_4", "Cuartos de Final", "2026-07-10", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+
+        // Semifinales
+        Match("SF_1", "Semifinales", "2026-07-14", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+        Match("SF_2", "Semifinales", "2026-07-15", "17:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+
+        // Tercer Lugar
+        Match("3RD", "Tercer Lugar", "2026-07-18", "13:00", "Por definir", "🏳️", "Por definir", "🏳️"),
+
+        // Final
+        Match("FIN", "Final", "2026-07-19", "17:00", "Por definir", "🏳️", "Por definir", "🏳️")
     )
 
     fun getMatchesFlow(): Flow<List<Match>> = callbackFlow {
         val db = FirebaseFirestore.getInstance()
+        Log.d("MatchRepository", "Starting getMatchesFlow collection listener on 'matches'")
+        
         val listener = db.collection("matches")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    Log.e("MatchRepository", "Listen failed.", error)
+                    Log.e("MatchRepository", "Firebase Listen failed!", error)
                     return@addSnapshotListener
                 }
 
                 if (snapshot != null) {
-                    // Mapeamos los documentos por su propio ID (M01, M02, ...)
-                    val firebaseDocs = snapshot.documents.associateBy { it.id }
-                    // También mapeamos por matchCode (DENTRO de elements) para una búsqueda de respaldo
-                    val docsByCode = snapshot.documents.associateBy { it.getString("elements.matchCode") }
+                    Log.d("MatchRepository", "Firebase snapshot received with ${snapshot.size()} documents")
                     
-                    Log.d("MatchRepository", "Fetched ${firebaseDocs.size} matches from Firestore.")
-
-                    val updatedMatches = allMatches.mapIndexed { index, staticMatch ->
-                        val expectedDocId = "M${(index + 1).toString().padStart(2, '0')}"
+                    // Mapa de resultados finales, inicializado con los estáticos
+                    val finalMatches = allMatches.associateBy { it.id }.toMutableMap()
+                    
+                    snapshot.documents.forEach { doc ->
+                        val data = doc.data ?: return@forEach
                         
-                        // Estrategia: Buscar primero por el ID esperado (M01...) 
-                        // y verificar que su matchCode coincida con el ID estático (A1...)
-                        var doc = firebaseDocs[expectedDocId]
+                        // Extraer el mapa 'elements' de forma segura
+                        @Suppress("UNCHECKED_CAST")
+                        fun asMap(value: Any?): Map<String, Any>? = value as? Map<String, Any>
+                        val elements = asMap(data["elements"])
                         
-                        if (doc != null) {
-                            val codeInDoc = doc.getString("elements.matchCode")
-                            if (codeInDoc != staticMatch.id) {
-                                Log.w("MatchRepository", "ID mismatch at $expectedDocId: expected ${staticMatch.id} but found $codeInDoc. Falling back to code search.")
-                                // Si no coinciden, buscamos por el campo matchCode dentro de elements
-                                doc = docsByCode[staticMatch.id]
+                        // 1. Determinar el matchCode (M73, R32_1, etc.)
+                        val mCodeRaw = (elements?.get("matchCode") ?: data["matchCode"] ?: doc.id).toString()
+                        var mCode = mCodeRaw
+                        
+                        // Mapeo M73 -> R32_1 (Índice 72)
+                        if (mCode.startsWith("M") && mCode.length <= 4) {
+                            val num = mCode.substring(1).toIntOrNull()
+                            if (num != null && num >= 1 && num <= allMatches.size) {
+                                mCode = allMatches[num - 1].id
                             }
-                        } else {
-                            // Si no existe el documento MXX, intentamos por el campo matchCode
-                            doc = docsByCode[staticMatch.id]
+                        }
+                        
+                        val static = finalMatches[mCode] ?: return@forEach
+
+                        // 2. Extraer equipos con fallback directo (Prioridad: elements > raíz)
+                        fun Map<String, Any>.findValue(key: String): Any? =
+                            entries.find { it.key.equals(key, ignoreCase = true) }?.value
+
+                        fun resolveString(value: Any?): String? {
+                            val resolved = when (value) {
+                                null -> null
+                                is Map<*, *> -> {
+                                    listOf("name", "team", "teamName", "nombre", "displayName", "shortName", "value")
+                                        .firstNotNullOfOrNull { nestedKey ->
+                                            value.entries.find { it.key?.toString()?.equals(nestedKey, ignoreCase = true) == true }
+                                                ?.value
+                                                ?.let(::resolveString)
+                                        }
+                                }
+                                else -> value.toString().trim()
+                            }
+                            return resolved?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                         }
 
-                        if (doc != null) {
-                            val homeScore = doc.getLong("elements.homeScore")?.toInt()
-                            val awayScore = doc.getLong("elements.awayScore")?.toInt()
-                            val started = doc.getBoolean("elements.started") ?: false
-                            val finished = doc.getBoolean("elements.finished") ?: false
-                            val isActive = doc.getBoolean("elements.isActive") ?: false
-                            
-                            Log.d("MatchRepository", "DEBUG MATCH ${staticMatch.id}: docId=${doc.id}, started=$started, finished=$finished, isActive=$isActive, score=$homeScore-$awayScore")
+                        fun getTeam(vararg keys: String): String? {
+                            val sources = listOfNotNull(elements, data)
+                            for (key in keys) {
+                                sources.firstNotNullOfOrNull { source ->
+                                    resolveString(source.findValue(key))
+                                }?.let { return it }
+                            }
+                            return null
+                        }
 
-                            staticMatch.copy(
-                                realHomeScore = homeScore,
-                                realAwayScore = awayScore,
-                                started = started,
-                                finished = finished,
-                                isActive = isActive,
-                                firebaseId = doc.id
+                        fun getNestedTeam(vararg paths: List<String>): String? {
+                            val sources = listOfNotNull(elements, data)
+                            for (path in paths) {
+                                for (source in sources) {
+                                    var current: Any? = source
+                                    path.forEach { key ->
+                                        current = asMap(current)?.findValue(key)
+                                    }
+                                    resolveString(current)?.let { return it }
+                                }
+                            }
+                            return null
+                        }
+
+                        fun resolvedTeam(current: String, candidate: String?): String =
+                            candidate?.takeIf { !it.equals("Por definir", ignoreCase = true) } ?: current
+
+                        val hTeam = resolvedTeam(
+                            static.homeTeam,
+                            getTeam(
+                                "homeTeam", "homeTeamName", "home", "localTeam", "localTeamName",
+                                "equipoLocal", "local", "teamHome", "team1", "homeName", "localName"
+                            ) ?: getNestedTeam(
+                                listOf("home", "team"), listOf("home", "name"),
+                                listOf("local", "team"), listOf("local", "name"),
+                                listOf("teams", "home"), listOf("teams", "local"),
+                                listOf("participants", "home"), listOf("participants", "local")
                             )
-                        } else {
-                            staticMatch
+                        )
+                        val aTeam = resolvedTeam(
+                            static.awayTeam,
+                            getTeam(
+                                "awayTeam", "awayTeamName", "away", "visitorTeam", "visitorTeamName",
+                                "visitanteTeam", "visitanteTeamName", "equipoVisitante", "visitante",
+                                "teamAway", "team2", "awayName", "visitorName", "visitanteName"
+                            ) ?: getNestedTeam(
+                                listOf("away", "team"), listOf("away", "name"),
+                                listOf("visitor", "team"), listOf("visitor", "name"),
+                                listOf("visitante", "team"), listOf("visitante", "name"),
+                                listOf("teams", "away"), listOf("teams", "visitor"), listOf("teams", "visitante"),
+                                listOf("participants", "away"), listOf("participants", "visitor"), listOf("participants", "visitante")
+                            )
+                        )
+                        
+                        if (doc.id == "M73" || mCode == "R32_1") {
+                            Log.d("MatchRepository", "DEBUG M73: docId=${doc.id}, h=$hTeam, a=$aTeam, hasElements=${elements != null}")
                         }
+
+                        // 3. Actualizar objeto
+                        finalMatches[mCode] = static.copy(
+                            homeTeam = hTeam,
+                            homeFlag = getFlag(hTeam),
+                            awayTeam = aTeam,
+                            awayFlag = getFlag(aTeam),
+                            group = getTeam("group", "grupo") ?: static.group,
+                            date = getTeam("date", "fecha", "api_local_date") ?: static.date,
+                            time = getTeam("time", "hora") ?: static.time,
+                            realHomeScore = getTeam("homeScore", "golesLocal")?.toDoubleOrNull()?.toInt(),
+                            realAwayScore = getTeam("awayScore", "golesVisitante")?.toDoubleOrNull()?.toInt(),
+                            started = (elements?.get("started") ?: data["started"]) as? Boolean ?: static.started,
+                            finished = (elements?.get("finished") ?: data["finished"]) as? Boolean ?: static.finished,
+                            isActive = (elements?.get("isActive") ?: data["isActive"]) as? Boolean ?: static.isActive,
+                            firebaseId = doc.id
+                        )
                     }
-                    this.trySend(updatedMatches)
+                    
+                    val sortedList = finalMatches.values.sortedWith(compareBy({ it.date }, { it.time }, { it.id }))
+                    Log.d("MatchRepository", "Emitting ${sortedList.size} matches to UI")
+                    this.trySend(sortedList)
                 }
             }
-        awaitClose { listener.remove() }
+        awaitClose { 
+            Log.d("MatchRepository", "Closing getMatchesFlow listener")
+            listener.remove() 
+        }
     }.flowOn(Dispatchers.IO)
 }

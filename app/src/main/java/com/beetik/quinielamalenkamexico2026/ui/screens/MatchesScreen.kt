@@ -236,6 +236,16 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            QuinielaSelector(
+                selectedQuiniela = selectedQuiniela,
+                savedQuinielas = savedQuinielas,
+                isLandscape = isLandscape,
+                onQuinielaSelected = { 
+                    selectedQuiniela = it
+                    selectedQuinielaId = it.id
+                }
+            )
+
             if (selectedView == "Partidos") {
                 MatchesListView(
                     filteredMatches = filteredMatches,
@@ -245,16 +255,6 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
                     sdfLocalDisplayDate = sdfLocalDisplayDate,
                     headerContent = {
                         Column {
-                            QuinielaSelector(
-                                selectedQuiniela = selectedQuiniela,
-                                savedQuinielas = savedQuinielas,
-                                isLandscape = isLandscape,
-                                onQuinielaSelected = { 
-                                    selectedQuiniela = it
-                                    selectedQuinielaId = it.id
-                                }
-                            )
-
                             ScrollableTabRow(
                                 selectedTabIndex = selectedMatchGroupIndex,
                                 containerColor = Color.Transparent,
@@ -324,16 +324,6 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
 
                 // Sticky Header for Posiciones
                 Column {
-                    QuinielaSelector(
-                        selectedQuiniela = selectedQuiniela,
-                        savedQuinielas = savedQuinielas,
-                        isLandscape = isLandscape,
-                        onQuinielaSelected = { 
-                            selectedQuiniela = it
-                            selectedQuinielaId = it.id
-                        }
-                    )
-
                     // Simulation Toggle - Ahora FUERA del scroll de GroupStandingsView
                     Surface(
                         color = Gold.copy(alpha = 0.05f),

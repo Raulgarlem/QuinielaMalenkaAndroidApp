@@ -22,8 +22,8 @@ object ScoreCalculator {
 
         val matchesByGroup = allMatches.groupBy { it.group }
         
-        // 1. Determine real winners for fully finished groups
-        val realGroupWinners = matchesByGroup.mapValues { (groupName, matches) ->
+        // 1. Determine real winners for fully finished groups (only for Group Stage)
+        val realGroupWinners = matchesByGroup.filterKeys { it.startsWith("Grupo") }.mapValues { (groupName, matches) ->
             val allGroupFinished = matches.all { it.finished }
             if (!allGroupFinished) return@mapValues null
             
@@ -82,6 +82,7 @@ object ScoreCalculator {
         realGroupWinners.forEach { (group, realWinner) ->
             if (realWinner != null) {
                 if (winnerPreds[group] == realWinner) {
+                    hits++
                     points += 2
                 }
             }

@@ -29,4 +29,12 @@ sealed class Screen(
     object FillQuiniela : Screen("fill_quiniela/{quinielaId}", "Llenar Quiniela", Icons.Filled.ListAlt, Icons.Outlined.ListAlt) {
         fun createRoute(quinielaId: Int) = "fill_quiniela/$quinielaId"
     }
+
+    object FillEliminatorias : Screen("fill_eliminatorias/{quinielaId}", "Llenar Eliminatorias", Icons.Filled.ListAlt, Icons.Outlined.ListAlt) {
+        fun createRoute(quinielaId: Int) = "fill_eliminatorias/$quinielaId"
+    }
+
+    object RoundSelection : Screen("round_selection/{quinielaId}", "Selección de Ronda", Icons.Filled.ListAlt, Icons.Outlined.ListAlt) {
+        fun createRoute(quinielaId: Int) = "round_selection/$quinielaId"
+    }
 }

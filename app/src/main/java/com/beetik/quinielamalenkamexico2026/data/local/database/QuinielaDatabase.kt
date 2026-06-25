@@ -9,7 +9,7 @@ import com.beetik.quinielamalenkamexico2026.data.local.dao.RankingConfigDao
 import com.beetik.quinielamalenkamexico2026.data.local.entity.QuinielaEntity
 import com.beetik.quinielamalenkamexico2026.data.local.entity.RankingConfigEntity
 
-@Database(entities = [QuinielaEntity::class, RankingConfigEntity::class], version = 7, exportSchema = false)
+@Database(entities = [QuinielaEntity::class, RankingConfigEntity::class], version = 8, exportSchema = false)
 abstract class QuinielaDatabase : RoomDatabase() {
     abstract fun quinielaDao(): QuinielaDao
     abstract fun rankingConfigDao(): RankingConfigDao

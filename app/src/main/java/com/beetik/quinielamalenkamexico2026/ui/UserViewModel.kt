@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,7 +17,10 @@ import com.beetik.quinielamalenkamexico2026.model.MatchResult
 import com.beetik.quinielamalenkamexico2026.util.ScoreCalculator
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
@@ -24,6 +28,7 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
     private val firestore = FirebaseFirestore.getInstance()
     private val gson = Gson()
+    private val database = QuinielaDatabase.getDatabase(application)
 
     var name by mutableStateOf(prefs.getString("user_name", "") ?: "")
         private set
@@ -43,6 +48,12 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
     var bestScore by mutableIntStateOf(0)
         private set
 
+    var rankingPosition by mutableStateOf("-")
+        private set
+
+    var globalHits by mutableStateOf("-")
+        private set
+
     var rankTitle by mutableStateOf("Sin Código")
         private set
 
@@ -55,9 +66,81 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
     var isSyncing by mutableStateOf(false)
         private set
 
+    var isAdmin by mutableStateOf(false)
+        private set
+
+    var isFaseGruposActive by mutableStateOf(true)
+        private set
+
+    var isFaseFinalActive by mutableStateOf(true)
+        private set
+
+    private val officialParticipantsFlow = mutableStateOf<List<Pair<Map<String, MatchResult>, Map<String, String>>>>(emptyList())
+
     init {
+        observeLocalStats()
         if (isLoggedIn && email.isNotBlank()) {
             fetchFirebaseStats()
+        }
+    }
+
+    private fun observeLocalStats() {
+        viewModelScope.launch {
+            val matchesFlow = MatchRepository.getMatchesFlow()
+                .onStart { emit(MatchRepository.allMatches) }
+            val quinielasFlow = database.quinielaDao().getAllQuinielasFlow()
+            val emailFlow = snapshotFlow { email }
+            val officialFlow = snapshotFlow { officialParticipantsFlow.value }
+
+            combine(matchesFlow, quinielasFlow, emailFlow, officialFlow) { matches, quinielas, currentEmail, officialPreds ->
+                val myQuinielas = quinielas.filter { 
+                    it.userEmail.lowercase().trim() == currentEmail.lowercase().trim() 
+                }
+                
+                val finishedMatches = matches.count { it.finished }
+                val matchesByGroup = matches.groupBy { it.group }
+                val finishedGroups = matchesByGroup.filterKeys { it.startsWith("Grupo") }.count { (_, gMatches) ->
+                    gMatches.all { it.finished } 
+                }
+                val totalItems = finishedMatches + finishedGroups
+
+                var maxP = -1
+                var bestHits = 0
+                myQuinielas.forEach { entity ->
+                    try {
+                        val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
+                        val winnersType = object : TypeToken<Map<String, String>>() {}.type
+                        val results: Map<String, MatchResult> = gson.fromJson(entity.resultsJson, resultsType)
+                        val winners: Map<String, String> = gson.fromJson(entity.winnersJson, winnersType)
+                        
+                        val stats = ScoreCalculator.calculateStats(matches, results, winners)
+                        if (stats.totalPoints > maxP) {
+                            maxP = stats.totalPoints
+                            bestHits = stats.hits
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                val officialScores = officialPreds.map { (res, winners) ->
+                    ScoreCalculator.calculateStats(matches, res, winners).totalPoints
+                }
+
+                val posText = if (officialScores.isNotEmpty() && maxP >= 0) {
+                    val betterCount = officialScores.count { it > maxP }
+                    "${betterCount + 1} / ${officialScores.size}"
+                } else "-"
+
+                val hitsText = if (totalItems > 0 && maxP >= 0) {
+                    "$bestHits / $totalItems"
+                } else "-"
+
+                listOf(myQuinielas.size, if (maxP < 0) 0 else maxP, posText, hitsText)
+            }.collect { (count, maxP, pos, hits) ->
+                quinielaCount = count as Int
+                bestScore = maxP as Int
+                rankingPosition = pos as String
+                globalHits = hits as String
+            }
         }
     }
 
@@ -152,7 +235,8 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                             resultsJson = gson.toJson(results),
                             winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
                             isSent = true,
-                            isFavorite = existing?.isFavorite ?: false
+                            isFavorite = existing?.isFavorite ?: false,
+                            isKnockout = doc.getBoolean("isKnockout") ?: false
                         )
                         dao.insertQuiniela(entity)
                     }
@@ -185,7 +269,8 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                                     resultsJson = gson.toJson(results),
                                     winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
                                     isSent = (qMap["status"] as? String) == "received",
-                                    isFavorite = existing?.isFavorite ?: false
+                                    isFavorite = existing?.isFavorite ?: false,
+                                    isKnockout = qMap["isKnockout"] as? Boolean ?: false
                                 )
                                 dao.insertQuiniela(entity)
                             }
@@ -209,28 +294,24 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun fetchFirebaseStats() {
-        val currentEmail = email.lowercase().trim()
         val currentCode = accessCode.trim()
         isValidatingCode = true
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 1. Get sent quinielas
-                val sentSnap = if (currentEmail.isNotBlank()) {
-                    firestore.collection("quinielas")
-                        .whereEqualTo("userEmail", currentEmail)
-                        .get().await()
-                } else null
-                
-                // 2. Get saved quinielas
-                val savedSnap = if (currentEmail.isNotBlank()) {
-                    val docId = currentEmail.replace("@", "_").replace(".", "_")
-                    firestore.collection("guardadas")
-                        .document(docId)
-                        .get().await()
-                } else null
+                // Check Admin status
+                val userDocId = email.lowercase().trim().replace("@", "_").replace(".", "_")
+                if (userDocId.isNotBlank()) {
+                    val userDoc = firestore.collection("guardadas").document(userDocId).get().await()
+                    isAdmin = userDoc.getBoolean("isAdmin") ?: false
+                }
 
-                // 3. Get access codes / titles
+                // Get active phases
+                val activeSnap = firestore.collection("codigos").document("quinielaActiva").get().await()
+                isFaseGruposActive = activeSnap.getBoolean("faseGrupos") ?: false
+                isFaseFinalActive = activeSnap.getBoolean("faseFinal") ?: false
+
+                // Get access codes / titles
                 val codesSnap = firestore.collection("codigos")
                     .document("creados")
                     .get().await()
@@ -257,59 +338,28 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                var totalCount = sentSnap?.size() ?: 0
-                val allQuinielaResults = mutableListOf<Pair<Map<String, MatchResult>, Map<String, String>>>()
-
-                // Parse sent quinielas
-                sentSnap?.documents?.forEach { doc ->
-                    val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
-                    val winnersRaw = doc.get("groupWinners") as? Map<String, String>
+                // Fetch official participants for the code to calculate global ranking
+                val officialList = if (currentCode.isNotBlank() && error == null) {
+                    val snapshot = firestore.collection("quinielas")
+                        .whereEqualTo("quinielaCode", currentCode.trim())
+                        .whereEqualTo("paymentReceived", true)
+                        .get().await()
                     
-                    if (resultsRaw != null) {
-                        val results = resultsRaw.mapValues { (_, v) -> 
+                    snapshot.documents.map { doc ->
+                        val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
+                        val winnersRaw = doc.get("groupWinners") as? Map<String, String>
+                        val res = resultsRaw?.mapValues { (_, v) ->
                             MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
-                        }
-                        allQuinielaResults.add(results to (winnersRaw ?: emptyMap()))
+                        } ?: emptyMap()
+                        res to (winnersRaw ?: emptyMap())
                     }
-                }
-
-                // Parse saved quinielas
-                if (savedSnap != null && savedSnap.exists()) {
-                    val data = savedSnap.data
-                    if (data != null) {
-                        totalCount += data.size
-                        data.values.forEach { qData ->
-                            @Suppress("UNCHECKED_CAST")
-                            val qMap = qData as? Map<String, Any>
-                            if (qMap != null) {
-                                val resultsRaw = qMap["results"] as? Map<String, Map<String, String>>
-                                val winnersRaw = qMap["groupWinners"] as? Map<String, String>
-                                
-                                if (resultsRaw != null) {
-                                    val results = resultsRaw.mapValues { (_, v) -> 
-                                        MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
-                                    }
-                                    allQuinielaResults.add(results to (winnersRaw ?: emptyMap()))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Calculate best score
-                val matches = MatchRepository.allMatches
-                var maxP = 0
-                allQuinielaResults.forEach { (res, winners) ->
-                    val stats = ScoreCalculator.calculateStats(matches, res, winners)
-                    if (stats.totalPoints > maxP) maxP = stats.totalPoints
-                }
+                } else emptyList()
 
                 launch(Dispatchers.Main) {
-                    quinielaCount = totalCount
-                    bestScore = maxP
                     rankTitle = newTitle
                     codeError = error
                     isValidatingCode = false
+                    officialParticipantsFlow.value = officialList
                 }
 
             } catch (e: Exception) {

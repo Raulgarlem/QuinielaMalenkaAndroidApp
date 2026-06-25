@@ -18,6 +18,9 @@ interface QuinielaDao {
     @Query("SELECT * FROM quinielas WHERE id = :id LIMIT 1")
     suspend fun getQuinielaById(id: Int): QuinielaEntity?
 
+    @Query("SELECT * FROM quinielas WHERE userEmail = :email")
+    suspend fun getQuinielasByUser(email: String): List<QuinielaEntity>
+
     @Query("SELECT * FROM quinielas LIMIT 1")
     suspend fun getFirstQuiniela(): QuinielaEntity?
 

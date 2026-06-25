@@ -189,11 +189,31 @@ fun GlobalRankingView(
     ) {
         // 1. RESULTADOS SIMULADOS
         items(matchesToShow) { match ->
+            val distribution = remember(match, resultsMap, officialParticipants) {
+                val score = getEffectiveScore(match, resultsMap)
+                if (score == null) null
+                else {
+                    var exact = 0
+                    var result = 0
+                    var miss = 0
+                    officialParticipants.forEach { p ->
+                        val pts = calculatePoints(p.predictions[match.id] ?: (0 to 0), score)
+                        when (pts) {
+                            2 -> exact++
+                            1 -> result++
+                            0 -> miss++
+                        }
+                    }
+                    Triple(exact, result, miss)
+                }
+            }
+
             SimulatedMatchHeader(
                 match = match,
                 resultsMap = resultsMap,
                 onClearSimulation = { onClearSimulation(match) },
-                onClick = { onMatchClick(match) }
+                onClick = { onMatchClick(match) },
+                distribution = distribution
             )
         }
 
@@ -352,7 +372,13 @@ fun GlobalRankingView(
 }
 
 @Composable
-fun SimulatedMatchHeader(match: Match, resultsMap: Map<String, MatchScore>, onClearSimulation: () -> Unit, onClick: () -> Unit) {
+fun SimulatedMatchHeader(
+    match: Match, 
+    resultsMap: Map<String, MatchScore>, 
+    onClearSimulation: () -> Unit, 
+    onClick: () -> Unit,
+    distribution: Triple<Int, Int, Int>? = null
+) {
     val isSimulated = resultsMap.containsKey(match.id)
     val isLive = match.started && match.isActive
     val isFinished = match.finished
@@ -405,8 +431,38 @@ fun SimulatedMatchHeader(match: Match, resultsMap: Map<String, MatchScore>, onCl
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(match.awayFlag, fontSize = 26.sp)
                 }
+
+                if (distribution != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        DistributionItem(points = 2, count = distribution.first)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        DistributionItem(points = 1, count = distribution.second)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        DistributionItem(points = 0, count = distribution.third)
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+fun DistributionItem(points: Int, count: Int) {
+    val color = getPointColor(points)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("$count", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 

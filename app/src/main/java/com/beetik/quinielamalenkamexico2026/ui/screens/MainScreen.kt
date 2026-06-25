@@ -188,6 +188,31 @@ fun MainScreen() {
                         }
                     )
                 }
+                composable(Screen.FillEliminatorias.route) { backStackEntry ->
+                    val quinielaId = backStackEntry.arguments?.getString("quinielaId")?.toIntOrNull() ?: -1
+                    // For now, redirect to a placeholder or a new screen if I've created it
+                    EliminatoriasScreen(
+                        quinielaId = quinielaId,
+                        userViewModel = userViewModel,
+                        onBack = {
+                            val backAction: () -> Unit = { navController.popBackStack() }
+                            if (editState.hasUnsavedChanges) {
+                                pendingAction = backAction
+                                showUnsavedDialog = true
+                            } else {
+                                backAction()
+                            }
+                        }
+                    )
+                }
+                composable(Screen.RoundSelection.route) { backStackEntry ->
+                    val quinielaId = backStackEntry.arguments?.getString("quinielaId")?.toIntOrNull() ?: -1
+                    RoundSelectionScreen(
+                        quinielaId = quinielaId,
+                        userViewModel = userViewModel,
+                        navController = navController
+                    )
+                }
             }
         }
     }

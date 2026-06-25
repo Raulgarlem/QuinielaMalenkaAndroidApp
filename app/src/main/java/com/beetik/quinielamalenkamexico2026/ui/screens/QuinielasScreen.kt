@@ -3,6 +3,7 @@ package com.beetik.quinielamalenkamexico2026.ui.screens
 import android.content.res.Configuration
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +12,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForwardIos
@@ -18,6 +20,7 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Sync
@@ -41,6 +44,7 @@ import com.beetik.quinielamalenkamexico2026.model.MatchResult
 import com.beetik.quinielamalenkamexico2026.ui.UserViewModel
 import com.beetik.quinielamalenkamexico2026.ui.navigation.Screen
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
+import com.beetik.quinielamalenkamexico2026.util.ScoreCalculator
 import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -58,8 +62,9 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val coroutineScope = rememberCoroutineScope()
     val gson = remember { Gson() }
-    val allMatches = remember { MatchRepository.allMatches }
-    val groupCount = remember { allMatches.groupBy { it.group }.size }
+    val allMatchesFlow = remember { MatchRepository.getMatchesFlow() }
+    val currentMatches by allMatchesFlow.collectAsState(initial = MatchRepository.allMatches)
+    val groupCount = remember { MatchRepository.allMatches.groupBy { it.group }.size }
     
     // Using a simple state and LaunchedEffect to collect from the flow
     var allQuinielas by remember { mutableStateOf<List<QuinielaEntity>>(emptyList()) }
@@ -344,7 +349,7 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { navController.navigate(Screen.FillQuiniela.createRoute(-1)) },
+                onClick = { navController.navigate(Screen.RoundSelection.createRoute(-1)) },
                 containerColor = Gold,
                 contentColor = Color.Black
             ) {
@@ -458,13 +463,51 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
+                item {
+                    // Points Calculation Info Banner
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF001A33).copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color(0xFF003366))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = Color(0xFF3399FF),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    "CÁLCULO DE PUNTOS",
+                                    color = Color(0xFF3399FF),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Los puntos de esta sección NO consideran juegos en vivo, solo juegos finalizados",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
                 items(
                     count = filteredQuinielas.size,
                     key = { filteredQuinielas[it].id }
                 ) { index ->
                     val entity = filteredQuinielas[index]
                     
-                    val isComplete = remember(entity.resultsJson, entity.winnersJson, entity.userEmail) {
+                    val scoreStats = remember(entity, currentMatches) {
                         try {
                             val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
                             val winnersType = object : TypeToken<Map<String, String>>() {}.type
@@ -472,11 +515,36 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
                             val results: Map<String, MatchResult> = gson.fromJson(entity.resultsJson, resultsType)
                             val winners: Map<String, String> = gson.fromJson(entity.winnersJson, winnersType)
                             
-                            val matchesDone = results.values.count { it.homeScore.isNotEmpty() && it.awayScore.isNotEmpty() }
-                            val winnersDone = winners.size
-                            val emailValid = entity.userEmail.isNotBlank() && android.util.Patterns.EMAIL_ADDRESS.matcher(entity.userEmail).matches()
+                            ScoreCalculator.calculateStats(currentMatches, results, winners)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+
+                    val isComplete = remember(entity.resultsJson, entity.winnersJson, entity.userEmail, entity.isKnockout) {
+                        try {
+                            val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
+                            val results: Map<String, MatchResult> = gson.fromJson(entity.resultsJson, resultsType)
                             
-                            matchesDone == allMatches.size && winnersDone == groupCount && emailValid
+                            val emailValid = entity.userEmail.isNotBlank() && android.util.Patterns.EMAIL_ADDRESS.matcher(entity.userEmail).matches()
+
+                            if (entity.isKnockout) {
+                                // For knockout, it's "complete" if at least one match is filled and email is valid
+                                // (Since we don't know all matches yet)
+                                val matchesDone = results.values.count { it.homeScore.isNotEmpty() && it.awayScore.isNotEmpty() }
+                                matchesDone > 0 && emailValid
+                            } else {
+                                val winnersType = object : TypeToken<Map<String, String>>() {}.type
+                                val winners: Map<String, String> = gson.fromJson(entity.winnersJson, winnersType)
+                                
+                                val groupStageMatches = MatchRepository.allMatches.filter { it.group.startsWith("Grupo") }
+                                val matchesDone = results.filterKeys { k -> groupStageMatches.any { it.id == k } }
+                                    .values.count { it.homeScore.isNotEmpty() && it.awayScore.isNotEmpty() }
+                                
+                                val winnersDone = winners.size
+                                
+                                matchesDone == groupStageMatches.size && winnersDone == groupCount && emailValid
+                            }
                         } catch (_: Exception) {
                             false
                         }
@@ -537,7 +605,7 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
                             statusColor = statusColor,
                             date = "Propietario: ${entity.propietarioName}",
                             participants = entity.userEmail,
-                            points = if (entity.isSent) "0" else null, // Placeholder points
+                            points = scoreStats?.totalPoints?.toString(),
                             isFavorite = entity.isFavorite,
                             onFavoriteClick = {
                                 coroutineScope.launch {
@@ -548,7 +616,9 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
                                 quinielaForOptions = entity
                                 showBottomSheet = true
                             },
-                            onClick = { navController.navigate(Screen.FillQuiniela.createRoute(entity.id)) }
+                            onClick = { 
+                                navController.navigate(Screen.RoundSelection.createRoute(entity.id))
+                            }
                         )
                     }
                 }
@@ -562,7 +632,7 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
                             .clip(MaterialTheme.shapes.medium)
                             .background(Color.Transparent)
                             .border(1.dp, Gold.copy(alpha = 0.5f), MaterialTheme.shapes.medium)
-                            .clickable { navController.navigate(Screen.FillQuiniela.createRoute(-1)) },
+                            .clickable { navController.navigate(Screen.RoundSelection.createRoute(-1)) },
                         contentAlignment = Alignment.Center
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

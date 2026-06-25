@@ -73,11 +73,11 @@ fun QuinielaScreen(
     userViewModel: UserViewModel = viewModel(),
     onBack: () -> Unit = {}
 ) {
-    var allMatches by remember { mutableStateOf(MatchRepository.allMatches) }
+    var allMatches by remember { mutableStateOf(MatchRepository.allMatches.filter { it.group.startsWith("Grupo") }) }
     
     LaunchedEffect(Unit) {
         MatchRepository.getMatchesFlow().collect { updated ->
-            allMatches = updated
+            allMatches = updated.filter { it.group.startsWith("Grupo") }
         }
     }
 
@@ -344,6 +344,7 @@ fun QuinielaScreen(
             "groupWinners" to groupWinners,
             "updatedAt" to System.currentTimeMillis(),
             "status" to if (collectionPath == "quinielas") "received" else "saved",
+            "isGroups" to true,
             "emailStatus" to "pending",
             "paymentReceived" to false
         )
@@ -461,7 +462,8 @@ fun QuinielaScreen(
                             quinielaCode = qCode,
                             resultsJson = gson.toJson(results),
                             winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
-                            isSent = true
+                            isSent = true,
+                            isKnockout = doc.getBoolean("isKnockout") ?: false
                         ))
                     }
                 }
@@ -491,7 +493,8 @@ fun QuinielaScreen(
                                     quinielaCode = qCode,
                                     resultsJson = gson.toJson(results),
                                     winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
-                                    isSent = (qMap["status"] as? String) == "received"
+                                    isSent = (qMap["status"] as? String) == "received",
+                                    isKnockout = qMap["isKnockout"] as? Boolean ?: false
                                 ))
                             }
                         }
@@ -1032,12 +1035,12 @@ fun QuinielaScreen(
 
                         Button(
                             onClick = {
-                                val matchesComplete = allMatches.all { match ->
+                                val matchesComplete = allMatches.filter { it.group.startsWith("Grupo") }.all { match ->
                                     val res = matchResults[match.id]
                                     res != null && res.homeScore.isNotEmpty() && res.awayScore.isNotEmpty()
                                 }
                                 
-                                val winnersComplete = groupNames.all { groupName ->
+                                val winnersComplete = groupNames.filter { it.startsWith("Grupo") }.all { groupName ->
                                     groupWinners[groupName] != null
                                 }
 

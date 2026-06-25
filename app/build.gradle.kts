@@ -17,7 +17,7 @@ android {
         applicationId = "com.beetik.quinielamalenkamexico2026"
         minSdk = 24
         targetSdk = 36
-        versionCode = 5
+        versionCode = 6
         versionName = "2.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

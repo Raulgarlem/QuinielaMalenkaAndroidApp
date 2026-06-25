@@ -274,6 +274,9 @@ fun LoginDialog(userViewModel: UserViewModel, onDismiss: () -> Unit, onLogin: (S
 @Composable
 fun LoggedProfileScreen(userViewModel: UserViewModel) {
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showAdminPasswordDialog by remember { mutableStateOf(false) }
+    var showAdminConfigDialog by remember { mutableStateOf(false) }
+    
     val context = LocalContext.current
     val database = remember { QuinielaDatabase.getDatabase(context) }
 
@@ -289,6 +292,23 @@ fun LoggedProfileScreen(userViewModel: UserViewModel) {
             onUpdate = { newCode ->
                 userViewModel.updateAccessCode(newCode)
             }
+        )
+    }
+
+    if (showAdminPasswordDialog) {
+        AdminPasswordDialog(
+            userViewModel = userViewModel,
+            onDismiss = { showAdminPasswordDialog = false },
+            onVerified = {
+                showAdminPasswordDialog = false
+                showAdminConfigDialog = true
+            }
+        )
+    }
+
+    if (showAdminConfigDialog) {
+        AdminConfigDialog(
+            onDismiss = { showAdminConfigDialog = false }
         )
     }
 
@@ -321,8 +341,8 @@ fun LoggedProfileScreen(userViewModel: UserViewModel) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
                     StatBox("Quinielas", userViewModel.quinielaCount.toString(), "creadas")
                     StatBox("Mejor Puntaje", userViewModel.bestScore.toString(), "puntos")
-                    StatBox("Posición", "#---", "en ranking")
-                    StatBox("Aciertos", "---", "globales")
+                    StatBox("Posición", userViewModel.rankingPosition, "en ranking")
+                    StatBox("Aciertos", userViewModel.globalHits, "globales")
                 }
             }
             
@@ -340,6 +360,11 @@ fun LoggedProfileScreen(userViewModel: UserViewModel) {
             
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (userViewModel.isAdmin) {
+                        MenuItem("Elegir Quiniela (Admin)", Icons.Default.AdminPanelSettings, color = Gold) {
+                            showAdminPasswordDialog = true
+                        }
+                    }
                     MenuItem(
                         text = if (userViewModel.isSyncing) "Sincronizando..." else "Cargar mis quinielas (Cloud)",
                         icon = if (userViewModel.isSyncing) Icons.Default.Sync else Icons.Default.CloudDownload
@@ -360,6 +385,140 @@ fun LoggedProfileScreen(userViewModel: UserViewModel) {
             }
         }
     }
+}
+
+@Composable
+fun AdminPasswordDialog(userViewModel: UserViewModel, onDismiss: () -> Unit, onVerified: () -> Unit) {
+    var password by remember { mutableStateOf("") }
+    var isVerifying by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val firestore = remember { com.google.firebase.firestore.FirebaseFirestore.getInstance() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Autenticación de Administrador") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Ingrese la contraseña maestra asociada a su cuenta:")
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Contraseña") },
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    singleLine = true
+                )
+                if (isVerifying) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    isVerifying = true
+                    val userDocId = userViewModel.email.lowercase().trim().replace("@", "_").replace(".", "_")
+                    firestore.collection("codigos").document("correos").get()
+                        .addOnSuccessListener { doc ->
+                            val cloudPass = doc.getString(userDocId)
+                            if (cloudPass != null && cloudPass == password) {
+                                onVerified()
+                            } else {
+                                Toast.makeText(context, "Contraseña incorrecta", Toast.LENGTH_SHORT).show()
+                                isVerifying = false
+                            }
+                        }
+                        .addOnFailureListener {
+                            Toast.makeText(context, "Error al verificar: ${it.message}", Toast.LENGTH_SHORT).show()
+                            isVerifying = false
+                        }
+                },
+                enabled = password.isNotBlank() && !isVerifying,
+                colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color.Black)
+            ) {
+                Text("Verificar")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isVerifying) {
+                Text("Cancelar")
+            }
+        }
+    )
+}
+
+@Composable
+fun AdminConfigDialog(onDismiss: () -> Unit) {
+    val firestore = remember { com.google.firebase.firestore.FirebaseFirestore.getInstance() }
+    var faseGrupos by remember { mutableStateOf(false) }
+    var faseFinal by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        firestore.collection("codigos").document("quinielaActiva").get()
+            .addOnSuccessListener { doc ->
+                faseGrupos = doc.getBoolean("faseGrupos") ?: false
+                faseFinal = doc.getBoolean("faseFinal") ?: false
+                isLoading = false
+            }
+            .addOnFailureListener {
+                Toast.makeText(context, "Error al cargar configuración", Toast.LENGTH_SHORT).show()
+                onDismiss()
+            }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Elegir Quiniela Activa") },
+        text = {
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Gold)
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Quiniela Fase de Grupos")
+                        Switch(
+                            checked = faseGrupos,
+                            onCheckedChange = { 
+                                faseGrupos = it
+                                firestore.collection("codigos").document("quinielaActiva")
+                                    .update("faseGrupos", it)
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Gold, checkedTrackColor = Gold.copy(alpha = 0.5f))
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Quiniela Fase Final")
+                        Switch(
+                            checked = faseFinal,
+                            onCheckedChange = { 
+                                faseFinal = it
+                                firestore.collection("codigos").document("quinielaActiva")
+                                    .update("faseFinal", it)
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Gold, checkedTrackColor = Gold.copy(alpha = 0.5f))
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color.Black)) {
+                Text("Cerrar")
+            }
+        }
+    )
 }
 
 @Composable
