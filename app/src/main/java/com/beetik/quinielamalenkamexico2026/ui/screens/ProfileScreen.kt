@@ -452,6 +452,8 @@ fun AdminConfigDialog(onDismiss: () -> Unit) {
     val firestore = remember { com.google.firebase.firestore.FirebaseFirestore.getInstance() }
     var faseGrupos by remember { mutableStateOf(false) }
     var faseFinal by remember { mutableStateOf(false) }
+    var visibleGroups by remember { mutableStateOf(false) }
+    var visibleFinal by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
     val context = LocalContext.current
 
@@ -460,6 +462,8 @@ fun AdminConfigDialog(onDismiss: () -> Unit) {
             .addOnSuccessListener { doc ->
                 faseGrupos = doc.getBoolean("faseGrupos") ?: false
                 faseFinal = doc.getBoolean("faseFinal") ?: false
+                visibleGroups = doc.getBoolean("visibleGroups") ?: false
+                visibleFinal = doc.getBoolean("visibleFinal") ?: false
                 isLoading = false
             }
             .addOnFailureListener {
@@ -478,12 +482,13 @@ fun AdminConfigDialog(onDismiss: () -> Unit) {
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("Permitir edición:", style = MaterialTheme.typography.labelMedium, color = Gold)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Quiniela Fase de Grupos")
+                        Text("Fase de Grupos")
                         Switch(
                             checked = faseGrupos,
                             onCheckedChange = { 
@@ -499,13 +504,61 @@ fun AdminConfigDialog(onDismiss: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Quiniela Fase Final")
+                        Text("Fase Final")
                         Switch(
                             checked = faseFinal,
                             onCheckedChange = { 
                                 faseFinal = it
                                 firestore.collection("codigos").document("quinielaActiva")
                                     .update("faseFinal", it)
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Gold, checkedTrackColor = Gold.copy(alpha = 0.5f))
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text("Visibilidad y Ranking:", style = MaterialTheme.typography.labelMedium, color = Gold)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Ver/Contar Grupos")
+                        Switch(
+                            checked = visibleGroups,
+                            onCheckedChange = { 
+                                visibleGroups = it
+                                if (it) visibleFinal = false
+                                firestore.collection("codigos").document("quinielaActiva")
+                                    .update(
+                                        mapOf(
+                                            "visibleGroups" to it,
+                                            "visibleFinal" to if (it) false else visibleFinal
+                                        )
+                                    )
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Gold, checkedTrackColor = Gold.copy(alpha = 0.5f))
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Ver/Contar Finales")
+                        Switch(
+                            checked = visibleFinal,
+                            onCheckedChange = { 
+                                visibleFinal = it
+                                if (it) visibleGroups = false
+                                firestore.collection("codigos").document("quinielaActiva")
+                                    .update(
+                                        mapOf(
+                                            "visibleFinal" to it,
+                                            "visibleGroups" to if (it) false else visibleGroups
+                                        )
+                                    )
                             },
                             colors = SwitchDefaults.colors(checkedThumbColor = Gold, checkedTrackColor = Gold.copy(alpha = 0.5f))
                         )

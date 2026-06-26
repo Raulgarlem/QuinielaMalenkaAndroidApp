@@ -110,7 +110,11 @@ fun InicioScreen(
         }
 
         // 3. Si todo terminó, mostrar los últimos
-        listOf(Triple(allMatches.last(), allMatches.last().time, "Final"))
+        if (allMatches.isNotEmpty()) {
+            listOf(Triple(allMatches.last(), allMatches.last().time, "Final"))
+        } else {
+            emptyList()
+        }
     }
 
     // --- Lógica de Estadísticas ---

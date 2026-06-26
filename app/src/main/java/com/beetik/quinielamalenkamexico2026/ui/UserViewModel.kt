@@ -75,6 +75,11 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
     var isFaseFinalActive by mutableStateOf(true)
         private set
 
+    var isVisibleGroups by mutableStateOf(true)
+        private set
+    var isVisibleFinal by mutableStateOf(false)
+        private set
+
     private val officialParticipantsFlow = mutableStateOf<List<Pair<Map<String, MatchResult>, Map<String, String>>>>(emptyList())
 
     init {
@@ -91,14 +96,23 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
             val quinielasFlow = database.quinielaDao().getAllQuinielasFlow()
             val emailFlow = snapshotFlow { email }
             val officialFlow = snapshotFlow { officialParticipantsFlow.value }
+            val visibilityFlow = snapshotFlow { isVisibleGroups to isVisibleFinal }
 
-            combine(matchesFlow, quinielasFlow, emailFlow, officialFlow) { matches, quinielas, currentEmail, officialPreds ->
-                val myQuinielas = quinielas.filter { 
-                    it.userEmail.lowercase().trim() == currentEmail.lowercase().trim() 
+            combine(matchesFlow, quinielasFlow, emailFlow, officialFlow, visibilityFlow) { matches, quinielas, currentEmail, officialPreds, visibility ->
+                val (includeGroups, includeFinal) = visibility
+                // Filter matches based on visibility flags
+                val filteredMatches = matches.filter { match ->
+                    val isGroup = match.group.startsWith("Grupo")
+                    if (includeFinal) !isGroup else includeGroups && isGroup
+                }
+
+                val myQuinielas = quinielas.filter {
+                    it.userEmail.lowercase().trim() == currentEmail.lowercase().trim() &&
+                        shouldIncludePhase(it.isKnockout, includeGroups, includeFinal)
                 }
                 
-                val finishedMatches = matches.count { it.finished }
-                val matchesByGroup = matches.groupBy { it.group }
+                val finishedMatches = filteredMatches.count { it.finished }
+                val matchesByGroup = filteredMatches.groupBy { it.group }
                 val finishedGroups = matchesByGroup.filterKeys { it.startsWith("Grupo") }.count { (_, gMatches) ->
                     gMatches.all { it.finished } 
                 }
@@ -113,7 +127,7 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                         val results: Map<String, MatchResult> = gson.fromJson(entity.resultsJson, resultsType)
                         val winners: Map<String, String> = gson.fromJson(entity.winnersJson, winnersType)
                         
-                        val stats = ScoreCalculator.calculateStats(matches, results, winners)
+                        val stats = ScoreCalculator.calculateStats(filteredMatches, results, winners)
                         if (stats.totalPoints > maxP) {
                             maxP = stats.totalPoints
                             bestHits = stats.hits
@@ -122,7 +136,7 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val officialScores = officialPreds.map { (res, winners) ->
-                    ScoreCalculator.calculateStats(matches, res, winners).totalPoints
+                    ScoreCalculator.calculateStats(filteredMatches, res, winners).totalPoints
                 }
 
                 val posText = if (officialScores.isNotEmpty() && maxP >= 0) {
@@ -142,6 +156,16 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 globalHits = hits as String
             }
         }
+    }
+
+    private fun shouldIncludePhase(isKnockout: Boolean): Boolean {
+        return shouldIncludePhase(isKnockout, isVisibleGroups, isVisibleFinal)
+    }
+
+    private fun shouldIncludePhase(isKnockout: Boolean, includeGroups: Boolean, includeFinal: Boolean): Boolean {
+        if (includeFinal) return isKnockout
+        if (includeGroups) return !isKnockout
+        return false
     }
 
     fun login(userName: String, userEmail: String, code: String) {
@@ -310,6 +334,10 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 val activeSnap = firestore.collection("codigos").document("quinielaActiva").get().await()
                 isFaseGruposActive = activeSnap.getBoolean("faseGrupos") ?: false
                 isFaseFinalActive = activeSnap.getBoolean("faseFinal") ?: false
+                isVisibleGroups = activeSnap.getBoolean("visibleGroups") ?: false
+                isVisibleFinal = activeSnap.getBoolean("visibleFinal") ?: false
+                val includeGroups = isVisibleGroups
+                val includeFinal = isVisibleFinal
 
                 // Get access codes / titles
                 val codesSnap = firestore.collection("codigos")
@@ -339,13 +367,16 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Fetch official participants for the code to calculate global ranking
-                val officialList = if (currentCode.isNotBlank() && error == null) {
+                val officialList: List<Pair<Map<String, MatchResult>, Map<String, String>>> = if (currentCode.isNotBlank() && error == null) {
                     val snapshot = firestore.collection("quinielas")
                         .whereEqualTo("quinielaCode", currentCode.trim())
                         .whereEqualTo("paymentReceived", true)
                         .get().await()
                     
-                    snapshot.documents.map { doc ->
+                    snapshot.documents.mapNotNull { doc ->
+                        val isKnockout = doc.getBoolean("isKnockout") ?: false
+                        if (!shouldIncludePhase(isKnockout, includeGroups, includeFinal)) return@mapNotNull null
+
                         val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
                         val winnersRaw = doc.get("groupWinners") as? Map<String, String>
                         val res = resultsRaw?.mapValues { (_, v) ->

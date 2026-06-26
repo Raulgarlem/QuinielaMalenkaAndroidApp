@@ -57,7 +57,12 @@ fun RankingScreen(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     
     // Trigger reload when access code changes
-    LaunchedEffect(userViewModel.accessCode, userViewModel.isLoggedIn) {
+    LaunchedEffect(
+        userViewModel.accessCode,
+        userViewModel.isLoggedIn,
+        viewModel.isVisibleGroups,
+        viewModel.isVisibleFinal
+    ) {
         viewModel.loadOfficialParticipants(userViewModel.accessCode)
     }
     
@@ -99,12 +104,21 @@ fun RankingScreen(
     val context = LocalContext.current
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val savedQuinielas: List<QuinielaEntity> by database.quinielaDao().getAllQuinielasFlow().collectAsState(initial = emptyList())
+    val phaseSavedQuinielas = remember(savedQuinielas, viewModel.isVisibleGroups, viewModel.isVisibleFinal) {
+        savedQuinielas.filter { q ->
+            when {
+                viewModel.isVisibleFinal -> q.isKnockout
+                viewModel.isVisibleGroups -> !q.isKnockout
+                else -> false
+            }
+        }
+    }
     
     var showLoadQuinielaDialog by remember { mutableStateOf(false) }
 
-    val showAddButton by remember(savedQuinielas, baseParticipants.size) {
+    val showAddButton by remember(phaseSavedQuinielas, baseParticipants.size) {
         derivedStateOf {
-            savedQuinielas.isNotEmpty() && savedQuinielas.any { q -> baseParticipants.none { p -> p.id == "loaded_${q.id}" } }
+            phaseSavedQuinielas.isNotEmpty() && phaseSavedQuinielas.any { q -> baseParticipants.none { p -> p.id == "loaded_${q.id}" } }
         }
     }
 
@@ -250,7 +264,7 @@ fun RankingScreen(
                     }
                     
                     val groupMatches = matchesByGroup[match.group]!!
-                    if (groupMatches.last().id == match.id && groupMatches.all { getEffectiveScore(it, resultsMap) != null }) {
+                    if (groupMatches.lastOrNull()?.id == match.id && groupMatches.all { getEffectiveScore(it, resultsMap) != null }) {
                         val winner = allGroupWinners[match.group]
                         if (winner != null) {
                             baseParticipants.forEach { p ->
@@ -517,7 +531,7 @@ fun RankingScreen(
 
     if (showLoadQuinielaDialog) {
         LoadQuinielaDialog(
-            savedQuinielas = savedQuinielas,
+            savedQuinielas = phaseSavedQuinielas,
             onDismiss = { showLoadQuinielaDialog = false },
             onQuinielaSelected = { entity ->
                 val newParticipant = entity.toParticipant(userViewModel.email)

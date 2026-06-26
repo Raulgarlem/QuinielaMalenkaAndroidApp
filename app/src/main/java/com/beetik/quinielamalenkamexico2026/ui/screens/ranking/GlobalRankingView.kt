@@ -69,7 +69,7 @@ fun GlobalRankingView(
                 val firstUpcoming = upcomingMatches.first()
                 upcomingMatches.filter { it.date == firstUpcoming.date && it.time == firstUpcoming.time }
             } else {
-                listOf(allMatches.last())
+                if (allMatches.isNotEmpty()) listOf(allMatches.last()) else emptyList()
             }
         }
     }

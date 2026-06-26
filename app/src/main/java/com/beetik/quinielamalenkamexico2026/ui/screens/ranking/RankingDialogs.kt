@@ -153,6 +153,7 @@ fun QuinielaEntity.toParticipant(currentUserEmail: String = ""): Participant {
         isUser = this.userEmail.isNotBlank() && this.userEmail.lowercase().trim() == currentUserEmail.lowercase().trim(),
         predictions = predictions,
         groupWinnerPredictions = winners,
-        prevPosition = 0
+        prevPosition = 0,
+        isKnockout = this.isKnockout
     )
 }

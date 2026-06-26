@@ -188,16 +188,33 @@ object MatchRepository {
                         fun asMap(value: Any?): Map<String, Any>? = value as? Map<String, Any>
                         val elements = asMap(data["elements"])
                         
-                        // 1. Determinar el matchCode (M73, R32_1, etc.)
-                        val mCodeRaw = (elements?.get("matchCode") ?: data["matchCode"] ?: doc.id).toString()
+                        // 1. Determinar el matchCode (M73, R32_1, etc.) o ID numérico (73)
+                        val mCodeRaw = listOf(
+                            elements?.get("matchCode"),
+                            data["matchCode"],
+                            elements?.get("docId"),
+                            data["docId"],
+                            elements?.get("firebaseDocId"),
+                            data["firebaseDocId"],
+                            elements?.get("API_id"),
+                            data["API_id"],
+                            elements?.get("matchNumber"),
+                            data["matchNumber"],
+                            doc.id
+                        ).firstNotNullOfOrNull { value ->
+                            value?.toString()?.trim()?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                        } ?: doc.id
                         var mCode = mCodeRaw
                         
-                        // Mapeo M73 -> R32_1 (Índice 72)
-                        if (mCode.startsWith("M") && mCode.length <= 4) {
-                            val num = mCode.substring(1).toIntOrNull()
-                            if (num != null && num >= 1 && num <= allMatches.size) {
-                                mCode = allMatches[num - 1].id
-                            }
+                        // Mapeo M73 o "73" -> R32_1 (Índice 72)
+                        val numericPart = if (mCode.startsWith("M")) {
+                            mCode.substring(1).toIntOrNull()
+                        } else {
+                            mCode.toIntOrNull()
+                        }
+
+                        if (numericPart != null && numericPart >= 1 && numericPart <= allMatches.size) {
+                            mCode = allMatches[numericPart - 1].id
                         }
                         
                         val static = finalMatches[mCode] ?: return@forEach
@@ -249,11 +266,45 @@ object MatchRepository {
                         fun resolvedTeam(current: String, candidate: String?): String =
                             candidate?.takeIf { !it.equals("Por definir", ignoreCase = true) } ?: current
 
+                        fun normalizeGroup(firebaseGroup: String?): String {
+                            val group = firebaseGroup?.trim().orEmpty()
+                            val normalized = group.lowercase()
+                                .removePrefix("grupo ")
+                                .removePrefix("group ")
+                                .trim()
+                            return when (normalized) {
+                                "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l" -> "Grupo ${normalized.uppercase()}"
+                                "r32", "round32", "round_of_32", "16avos", "dieciseisavos" -> "16avos de Final"
+                                "r16", "round16", "round_of_16", "octavos" -> "Octavos de Final"
+                                "qf", "quarterfinal", "quarterfinals", "cuartos" -> "Cuartos de Final"
+                                "sf", "semifinal", "semifinals", "semifinales" -> "Semifinales"
+                                "3rd", "third_place", "tercer lugar" -> "Tercer Lugar"
+                                "fin", "final" -> "Final"
+                                else -> firebaseGroup ?: static.group
+                            }
+                        }
+
+                        fun normalizeDate(firebaseDate: String?): String {
+                            val rawDate = firebaseDate?.trim()?.substringBefore(" ").orEmpty()
+                            if (rawDate.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) return rawDate
+
+                            val slashParts = rawDate.split("/")
+                            if (slashParts.size == 3) {
+                                val month = slashParts[0].padStart(2, '0')
+                                val day = slashParts[1].padStart(2, '0')
+                                val year = slashParts[2]
+                                if (year.length == 4) return "$year-$month-$day"
+                            }
+
+                            return static.date
+                        }
+
                         val hTeam = resolvedTeam(
                             static.homeTeam,
                             getTeam(
                                 "homeTeam", "homeTeamName", "home", "localTeam", "localTeamName",
-                                "equipoLocal", "local", "teamHome", "team1", "homeName", "localName"
+                                "equipoLocal", "local", "teamHome", "team1", "homeName", "localName",
+                                "home_team", "home_name", "local_team", "local_name"
                             ) ?: getNestedTeam(
                                 listOf("home", "team"), listOf("home", "name"),
                                 listOf("local", "team"), listOf("local", "name"),
@@ -266,7 +317,8 @@ object MatchRepository {
                             getTeam(
                                 "awayTeam", "awayTeamName", "away", "visitorTeam", "visitorTeamName",
                                 "visitanteTeam", "visitanteTeamName", "equipoVisitante", "visitante",
-                                "teamAway", "team2", "awayName", "visitorName", "visitanteName"
+                                "teamAway", "team2", "awayName", "visitorName", "visitanteName",
+                                "away_team", "away_name", "visitor_team", "visitor_name", "visitante_team"
                             ) ?: getNestedTeam(
                                 listOf("away", "team"), listOf("away", "name"),
                                 listOf("visitor", "team"), listOf("visitor", "name"),
@@ -286,9 +338,9 @@ object MatchRepository {
                             homeFlag = getFlag(hTeam),
                             awayTeam = aTeam,
                             awayFlag = getFlag(aTeam),
-                            group = getTeam("group", "grupo") ?: static.group,
-                            date = getTeam("date", "fecha", "api_local_date") ?: static.date,
-                            time = getTeam("time", "hora") ?: static.time,
+                            group = normalizeGroup(getTeam("group", "grupo", "groupName", "type")),
+                            date = normalizeDate(getTeam("date", "fecha", "api_local_date")),
+                            time = getTeam("time", "hora", "timeMx") ?: static.time,
                             realHomeScore = getTeam("homeScore", "golesLocal")?.toDoubleOrNull()?.toInt(),
                             realAwayScore = getTeam("awayScore", "golesVisitante")?.toDoubleOrNull()?.toInt(),
                             started = (elements?.get("started") ?: data["started"]) as? Boolean ?: static.started,

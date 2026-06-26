@@ -92,7 +92,7 @@ fun TableView(
         }
     }
 
-    val lastMatchIdsByGroup = remember(matches) { matches.groupBy { it.group }.mapValues { it.value.last().id }.values.toSet() }
+    val lastMatchIdsByGroup = remember(matches) { matches.groupBy { it.group }.mapValues { it.value.lastOrNull()?.id }.values.filterNotNull().toSet() }
     
     var draggingId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }

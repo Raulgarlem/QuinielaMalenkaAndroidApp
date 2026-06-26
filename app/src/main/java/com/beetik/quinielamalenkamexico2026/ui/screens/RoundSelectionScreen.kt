@@ -135,7 +135,14 @@ fun RoundSelectionScreen(
         if (!userViewModel.isLoggedIn) return
         coroutineScope.launch {
             val list = withContext(Dispatchers.IO) { database.quinielaDao().getQuinielasByUser(userViewModel.email) }
-            savedQuinielas = list.filter { it.isKnockout }
+            savedQuinielas = list.filter { q ->
+                when {
+                    userViewModel.isFaseFinalActive && !userViewModel.isFaseGruposActive -> q.isKnockout
+                    userViewModel.isFaseGruposActive && !userViewModel.isFaseFinalActive -> !q.isKnockout
+                    userViewModel.isFaseGruposActive && userViewModel.isFaseFinalActive -> true
+                    else -> false
+                }
+            }
             showLoadDialog = true
         }
     }

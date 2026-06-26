@@ -32,5 +32,6 @@ data class Participant(
     val isUser: Boolean = false,
     val predictions: Map<String, Pair<Int, Int>>,
     val groupWinnerPredictions: Map<String, String>,
-    val prevPosition: Int
+    val prevPosition: Int,
+    val isKnockout: Boolean = false
 )

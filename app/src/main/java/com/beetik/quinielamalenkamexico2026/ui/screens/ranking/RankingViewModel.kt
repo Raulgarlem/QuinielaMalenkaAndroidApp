@@ -59,6 +59,10 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
     var isLiveRanking by mutableStateOf(false)
     var comparisonParticipantId by mutableStateOf<String?>(null)
 
+    var isVisibleGroups by mutableStateOf(true)
+    var isVisibleFinal by mutableStateOf(false)
+    private var currentAccessCode: String = prefs.getString("access_code", "") ?: ""
+
     // Match state from Firestore
     var allMatches by mutableStateOf<List<Match>>(MatchRepository.allMatches)
         private set
@@ -77,17 +81,19 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
         observeMatches()
         
         // Initial load of official participants based on current session
-        val currentCode = prefs.getString("access_code", "") ?: ""
-        loadOfficialParticipants(currentCode)
+        loadOfficialParticipants(currentAccessCode)
     }
 
     fun loadOfficialParticipants(accessCode: String) {
+        currentAccessCode = accessCode
         if (accessCode.isBlank()) {
             officialParticipants.clear()
             updateBaseParticipants()
             return
         }
 
+        val includeGroups = isVisibleGroups
+        val includeFinal = isVisibleFinal
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val snapshot = firestore.collection("quinielas")
@@ -95,7 +101,9 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
                     .whereEqualTo("paymentReceived", true)
                     .get().await()
 
-                val newOfficial = snapshot.documents.map { doc ->
+                val newOfficial = snapshot.documents.mapNotNull { doc ->
+                    val isKnockout = doc.getBoolean("isKnockout") ?: false
+                    if (!shouldIncludePhase(isKnockout, includeGroups, includeFinal)) return@mapNotNull null
                     val qName = doc.getString("quinielaName") ?: "Sin nombre"
                     val oName = doc.getString("propietarioName") ?: "Anónimo"
                     val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
@@ -112,7 +120,8 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
                         isUser = doc.getString("userEmail") == prefs.getString("user_email", ""),
                         predictions = predictions,
                         groupWinnerPredictions = winnersRaw ?: emptyMap(),
-                        prevPosition = 1 // Logic for prev position could be added if needed
+                        prevPosition = 1, // Logic for prev position could be added if needed
+                        isKnockout = isKnockout
                     )
                 }
 
@@ -129,7 +138,7 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
 
     private fun updateBaseParticipants() {
         // Find added participants from current state (only those starting with loaded_)
-        val added = baseParticipants.filter { it.id.startsWith("loaded_") }
+        val added = baseParticipants.filter { it.id.startsWith("loaded_") && shouldIncludePhase(it.isKnockout) }
         baseParticipants.clear()
         baseParticipants.addAll(officialParticipants)
         
@@ -142,11 +151,32 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun shouldIncludePhase(isKnockout: Boolean): Boolean {
+        return shouldIncludePhase(isKnockout, isVisibleGroups, isVisibleFinal)
+    }
+
+    private fun shouldIncludePhase(isKnockout: Boolean, includeGroups: Boolean, includeFinal: Boolean): Boolean {
+        if (includeFinal) return isKnockout
+        if (includeGroups) return !isKnockout
+        return false
+    }
+
+    private var rawMatches: List<Match> = MatchRepository.allMatches
+
     private fun observeMatches() {
         viewModelScope.launch {
+            // Monitor visibility flags
+            firestore.collection("codigos").document("quinielaActiva")
+                .addSnapshotListener { snapshot, _ ->
+                    isVisibleGroups = snapshot?.getBoolean("visibleGroups") ?: false
+                    isVisibleFinal = snapshot?.getBoolean("visibleFinal") ?: false
+                    updateFilteredMatches()
+                    loadOfficialParticipants(currentAccessCode)
+                }
+
             MatchRepository.getMatchesFlow().collectLatest { updatedMatches ->
                 Log.d("RankingViewModel", "Received ${updatedMatches.size} updated matches from Repository")
-                allMatches = updatedMatches
+                updateFilteredMatches(updatedMatches)
                 
                 updatedMatches.forEach { match ->
                     val isLive = match.started && match.isActive
@@ -182,6 +212,14 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
+        }
+    }
+
+    private fun updateFilteredMatches(updatedMatches: List<Match>? = null) {
+        if (updatedMatches != null) rawMatches = updatedMatches
+        allMatches = rawMatches.filter { match ->
+            val isGroup = match.group.startsWith("Grupo")
+            if (isVisibleFinal) !isGroup else isVisibleGroups && isGroup
         }
     }
 
@@ -277,7 +315,7 @@ class RankingViewModel(application: Application) : AndroidViewModel(application)
         
         baseParticipants.clear()
         baseParticipants.addAll(officialParticipants)
-        baseParticipants.addAll(config.addedParticipants)
+        baseParticipants.addAll(config.addedParticipants.filter { shouldIncludePhase(it.isKnockout) })
         
         pinnedParticipantCategories.clear()
         pinnedParticipantCategories.putAll(config.pinnedParticipantCategories)
