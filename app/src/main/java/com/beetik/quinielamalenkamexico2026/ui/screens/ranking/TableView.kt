@@ -93,6 +93,7 @@ fun TableView(
     }
 
     val lastMatchIdsByGroup = remember(matches) { matches.groupBy { it.group }.mapValues { it.value.lastOrNull()?.id }.values.filterNotNull().toSet() }
+    val firstMatchIdsByGroup = remember(matches) { matches.groupBy { it.group }.mapValues { it.value.firstOrNull()?.id }.values.filterNotNull().toSet() }
     
     var draggingId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
@@ -186,6 +187,26 @@ fun TableView(
 
         LazyColumn(modifier = Modifier.weight(1f)) {
             matches.forEach { match ->
+                if (firstMatchIdsByGroup.contains(match.id)) {
+                    item(key = "header_${match.group}") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp, bottom = 4.dp)
+                                .background(Color.Gray.copy(alpha = 0.1f)), 
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(modifier = Modifier.padding(horizontal = 16.dp).height(24.dp), contentAlignment = Alignment.CenterStart) {
+                                Text(
+                                    text = match.group.uppercase(),
+                                    color = Color.Gray,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                    }
+                }
                 item(key = match.id) {
                     val actual = getEffectiveScore(match, resultsMap)
                     val isConfirmed = confirmedIds.contains(match.id)
@@ -250,32 +271,51 @@ fun TableView(
                     }
                 }
                 if (lastMatchIdsByGroup.contains(match.id)) {
-                    item(key = "winner_${match.group}") {
-                        val actualWinner = remember(resultsMap.size, match.group) { getGroupWinner(match.group, matches, resultsMap) }
-                        val groupMatches = matches.filter { it.group == match.group }
-                        val isGroupFinished = groupMatches.all { it.id in resultsMap }
-                        val showWinnerResult = isGroupFinished || isLiveRanking
-
-                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).background(Gold.copy(alpha = 0.1f)), verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.width(150.dp), contentAlignment = Alignment.Center) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.EmojiEvents, null, tint = Gold, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp)); Text(actualWinner?.second ?: "🏳️", fontSize = 16.sp)
-                                    Spacer(modifier = Modifier.width(4.dp)); Text("Ganador ${match.group}", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            
-                            compP?.let { p ->
-                                GroupWinnerPredictionCell(p, match.group, actualWinner?.first, showWinnerResult)
+                    // Solo mostramos fila de ganador (dorada) para 3er lugar y Final (ya no hay puntos por grupos)
+                    val shouldShowWinnerRow = match.group == "Final" || match.group == "Tercer Lugar"
+                    
+                    if (shouldShowWinnerRow) {
+                        item(key = "winner_${match.group}") {
+                            val label = when (match.group) {
+                                "Final" -> "Campeón"
+                                "Tercer Lugar" -> "3er Lugar"
+                                else -> "Ganador ${match.group}"
                             }
 
-                            Row(modifier = Modifier.horizontalScroll(scrollState)) { 
-                                if (showAddButton) {
-                                    Box(modifier = Modifier.width(100.dp))
+                            val actualWinner = remember(resultsMap.size, match.group) { getGroupWinner(match.group, matches, resultsMap) }
+                            val groupMatches = matches.filter { it.group == match.group }
+                            val isGroupFinished = groupMatches.all { it.id in resultsMap }
+                            val showWinnerResult = isGroupFinished || isLiveRanking
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .background(Gold.copy(alpha = 0.1f)), 
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(modifier = Modifier.width(150.dp), contentAlignment = Alignment.Center) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.EmojiEvents, null, tint = Gold, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(actualWinner?.second ?: "🏳️", fontSize = 16.sp)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(label, color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
-                                scrollableParticipants.forEach { p ->
-                                    key(p.id) {
-                                        GroupWinnerPredictionCell(p, match.group, actualWinner?.first, showWinnerResult)
+                                
+                                compP?.let { p ->
+                                    GroupWinnerPredictionCell(p, match.group, actualWinner?.first, showWinnerResult)
+                                }
+
+                                Row(modifier = Modifier.horizontalScroll(scrollState)) { 
+                                    if (showAddButton) {
+                                        Box(modifier = Modifier.width(100.dp))
+                                    }
+                                    scrollableParticipants.forEach { p ->
+                                        key(p.id) {
+                                            GroupWinnerPredictionCell(p, match.group, actualWinner?.first, showWinnerResult)
+                                        }
                                     }
                                 }
                             }
@@ -324,7 +364,7 @@ fun TableView(
             }
         }
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = if (isLandscape) 1.dp else 2.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
-            LegendItem(2, "Marcador Exacto"); LegendItem(2, "Ganador Grupo"); LegendItem(1, "Resultado Correcto"); LegendItem(0, "Resultado Incorrecto")
+            LegendItem(2, "Marcador Exacto"); LegendItem(1, "Resultado Correcto"); LegendItem(5, "Campeón"); LegendItem(8, "3er Lugar"); LegendItem(0, "Incorrecto")
         }
     }
 }

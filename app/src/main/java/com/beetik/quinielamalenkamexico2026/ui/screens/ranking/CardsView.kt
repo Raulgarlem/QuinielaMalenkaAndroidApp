@@ -99,6 +99,9 @@ fun CardsView(
 
     // Pre-calcular ganadores de grupo y su estado para las tarjetas
     val todayGroups = remember(dayMatches) { dayMatches.map { it.group }.distinct() }
+    val knockoutGroups = listOf("16avos de Final", "Octavos de Final", "Cuartos de Final", "Semifinales", "Tercer Lugar", "Final")
+    val isKnockoutStage = remember(todayGroups) { todayGroups.any { it in knockoutGroups } }
+
     val currentWinners = remember(allMatches, resultsMap.size, resultsMap.values.toList(), todayGroups) {
         todayGroups.associateWith { getGroupWinner(it, allMatches, resultsMap) }
     }
@@ -109,6 +112,45 @@ fun CardsView(
             val isFinished = gM.all { it.id in resultsMap }
             hasResults && (isFinished || isLiveRanking)
         }
+    }
+
+    // Lógica de Favoritos para Fase Final
+    val eliminatedFromChampion = remember(allMatches, resultsMap.size) {
+        allMatches.filter { it.group in knockoutGroups && it.group != "Tercer Lugar" && it.finished }
+            .mapNotNull { match ->
+                val score = resultsMap[match.id] ?: (if (match.started) match.realHomeScore?.let { h -> match.realAwayScore?.let { a -> MatchScore(h, a) } } else null)
+                if (score != null) {
+                    if (score.home > score.away) match.awayTeam else if (score.away > score.home) match.homeTeam else null
+                } else null
+            }.toSet()
+    }
+
+    val eliminatedFromThirdPlace = remember(allMatches, resultsMap.size) {
+        allMatches.filter { it.group in knockoutGroups && !listOf("Semifinales", "Final", "Tercer Lugar").contains(it.group) && it.finished }
+            .mapNotNull { match ->
+                val score = resultsMap[match.id] ?: (if (match.started) match.realHomeScore?.let { h -> match.realAwayScore?.let { a -> MatchScore(h, a) } } else null)
+                if (score != null) {
+                    if (score.home > score.away) match.awayTeam else if (score.away > score.home) match.homeTeam else null
+                } else null
+            }.toSet()
+    }
+
+    val championFavorite = remember(allOfficialParticipants, eliminatedFromChampion) {
+        allOfficialParticipants.mapNotNull { it.groupWinnerPredictions["Final"] }
+            .filter { it !in eliminatedFromChampion }
+            .groupingBy { it }
+            .eachCount()
+            .toList()
+            .maxByOrNull { it.second }
+    }
+
+    val thirdPlaceFavorite = remember(allOfficialParticipants, eliminatedFromThirdPlace) {
+        allOfficialParticipants.mapNotNull { it.groupWinnerPredictions["Tercer Lugar"] }
+            .filter { it !in eliminatedFromThirdPlace }
+            .groupingBy { it }
+            .eachCount()
+            .toList()
+            .maxByOrNull { it.second }
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(bottom = 8.dp)) {
@@ -193,7 +235,7 @@ fun CardsView(
                 )
             }
 
-            // Ganadores de los grupos del día
+            // Ganadores de los grupos del día o Favoritos de Fase Final
             item {
                 Card(
                     modifier = Modifier.width(130.dp).fillMaxHeight(),
@@ -206,26 +248,34 @@ fun CardsView(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Icon(Icons.Default.EmojiEvents, null, tint = Gold, modifier = Modifier.size(24.dp))
-                        Text("LÍDERES HOY", color = Gold, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(if (isKnockoutStage) "FAVORITOS" else "LÍDERES HOY", color = Gold, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
                         
                         Spacer(modifier = Modifier.height(8.dp))
                         
-                        todayGroups.sorted().forEach { groupName ->
-                            val winner = currentWinners[groupName]
-                            val predCount = allOfficialParticipants.count { it.groupWinnerPredictions[groupName] == winner?.first }
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(groupName.replace("Grupo ", ""), color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(winner?.second ?: "🏳️", fontSize = 20.sp)
+                        if (isKnockoutStage) {
+                            // Mostrar Favoritos (Campeón y 3er Lugar)
+                            FavoriteRow("Campeón", championFavorite)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            FavoriteRow("3er Lugar", thirdPlaceFavorite)
+                        } else {
+                            // Mostrar Líderes de Grupo
+                            todayGroups.sorted().forEach { groupName ->
+                                val winner = currentWinners[groupName]
+                                val predCount = allOfficialParticipants.count { it.groupWinnerPredictions[groupName] == winner?.first }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(groupName.replace("Grupo ", ""), color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(winner?.second ?: "🏳️", fontSize = 20.sp)
+                                        }
                                     }
+                                    Text("($predCount)", color = Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                                 }
-                                Text("($predCount)", color = Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -480,6 +530,18 @@ fun MatchCard(
             ) { 
                 Text(if (canSimulate) "Simular" else "Finalizado", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
             }
+        }
+    }
+}
+
+@Composable
+fun FavoriteRow(label: String, favorite: Pair<String, Int>?) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label.uppercase(), color = Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (favorite != null) MatchRepository.getFlag(favorite.first) else "🏳️", fontSize = 20.sp)
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("(${favorite?.second ?: 0})", color = Color.Gray, fontSize = 8.sp, fontWeight = FontWeight.Bold)
         }
     }
 }

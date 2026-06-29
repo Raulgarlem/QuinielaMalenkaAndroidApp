@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.beetik.quinielamalenkamexico2026.model.Match
+import com.beetik.quinielamalenkamexico2026.ui.theme.Success
 
 @Composable
 fun MatchCard(
@@ -36,8 +37,10 @@ fun MatchCard(
 ) {
     val focusManager = LocalFocusManager.current
     val isLive = match.started && match.isActive
-    val isFinished = match.finished && !match.isActive
-    val isReadOnly = isLive || isFinished
+    val isFinished = match.finished
+    val isKnockout = !match.group.startsWith("Grupo")
+    val isReadOnly = (match.started || isFinished || match.isActive) && isKnockout
+    val showStatusBanner = match.started || isFinished
     
     val formattedDate = remember(match.date) {
         val parts = match.date.split("-")
@@ -112,6 +115,7 @@ fun MatchCard(
                         value = homeScore,
                         onValueChange = onHomeScoreChange,
                         enabled = !isReadOnly,
+                        isReadOnly = isReadOnly,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Number,
                             imeAction = ImeAction.Next
@@ -131,6 +135,7 @@ fun MatchCard(
                         value = awayScore,
                         onValueChange = onAwayScoreChange,
                         enabled = !isReadOnly,
+                        isReadOnly = isReadOnly,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Number,
                             imeAction = ImeAction.Next
@@ -156,14 +161,14 @@ fun MatchCard(
                 )
             }
 
-            if (isReadOnly) {
+            if (showStatusBanner) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val statusText = if (isLive) "VIVO" else "FINALIZADO"
-                    val statusColor = if (isLive) Color(0xFFE91E63) else Color.Gray
+                    val statusText = if (isFinished) "FINALIZADO" else "VIVO"
+                    val statusColor = if (isFinished) Color.Gray else Color(0xFFE91E63)
                     
                     Surface(
                         color = statusColor.copy(alpha = 0.1f),
@@ -231,6 +236,7 @@ fun ScoreInput(
     value: String,
     onValueChange: (String) -> Unit,
     enabled: Boolean = true,
+    isReadOnly: Boolean = false,
     keyboardOptions: KeyboardOptions = KeyboardOptions(
         keyboardType = KeyboardType.Number,
         imeAction = ImeAction.Next
@@ -269,8 +275,8 @@ fun ScoreInput(
                 }
             }
             .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline,
+                width = if (isReadOnly) 2.dp else 1.dp,
+                color = if (isReadOnly) Success else MaterialTheme.colorScheme.outline,
                 shape = MaterialTheme.shapes.extraSmall
             ),
         singleLine = true,

@@ -62,8 +62,7 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val coroutineScope = rememberCoroutineScope()
     val gson = remember { Gson() }
-    val allMatchesFlow = remember { MatchRepository.getMatchesFlow() }
-    val currentMatches by allMatchesFlow.collectAsState(initial = MatchRepository.allMatches)
+    val currentMatches by MatchRepository.matchesFlow.collectAsState()
     val groupCount = remember { MatchRepository.allMatches.groupBy { it.group }.size }
     
     // Using a simple state and LaunchedEffect to collect from the flow
@@ -115,6 +114,20 @@ fun QuinielasScreen(navController: NavController, userViewModel: UserViewModel =
                     color = Gold
                 )
                 
+                if (quinielaForOptions?.isKnockout == true) {
+                    ListItem(
+                        headlineContent = { Text("Editar Favoritos") },
+                        leadingContent = { Icon(Icons.Default.Star, contentDescription = null, tint = Gold) },
+                        modifier = Modifier.clickable {
+                            quinielaForOptions?.let { entity ->
+                                navController.navigate(Screen.FillEliminatorias.createRoute(entity.id))
+                                showBottomSheet = false
+                                quinielaForOptions = null
+                            }
+                        }
+                    )
+                }
+
                 ListItem(
                     headlineContent = { Text("Duplicar") },
                     leadingContent = { Icon(Icons.Default.ContentCopy, contentDescription = null) },

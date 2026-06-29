@@ -137,7 +137,13 @@ fun GlobalRankingView(
                 }
                 
                 groupWinnersForScope.forEach { (gName, winner) ->
-                    if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
+                    if (winner != null && winner == p.groupWinnerPredictions[gName]) {
+                        pts += when (gName) {
+                            "Final" -> 5
+                            "Tercer Lugar" -> 8
+                            else -> 0
+                        }
+                    }
                 }
                 p.id to pts
             }

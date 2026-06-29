@@ -2,6 +2,7 @@ package com.beetik.quinielamalenkamexico2026.ui
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -80,7 +81,8 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
     var isVisibleFinal by mutableStateOf(false)
         private set
 
-    private val officialParticipantsFlow = mutableStateOf<List<Pair<Map<String, MatchResult>, Map<String, String>>>>(emptyList())
+    private var officialParticipantsCache: List<Triple<Map<String, MatchResult>, Map<String, String>, Boolean>> by mutableStateOf(emptyList())
+    private var cachedAccessCodeForOfficial: String = ""
 
     init {
         observeLocalStats()
@@ -91,15 +93,22 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun observeLocalStats() {
         viewModelScope.launch {
-            val matchesFlow = MatchRepository.getMatchesFlow()
-                .onStart { emit(MatchRepository.allMatches) }
+            val matchesFlow = MatchRepository.matchesFlow
+            val configFlow = MatchRepository.configFlow
             val quinielasFlow = database.quinielaDao().getAllQuinielasFlow()
             val emailFlow = snapshotFlow { email }
-            val officialFlow = snapshotFlow { officialParticipantsFlow.value }
-            val visibilityFlow = snapshotFlow { isVisibleGroups to isVisibleFinal }
+            val officialFlow = snapshotFlow { officialParticipantsCache }
 
-            combine(matchesFlow, quinielasFlow, emailFlow, officialFlow, visibilityFlow) { matches, quinielas, currentEmail, officialPreds, visibility ->
-                val (includeGroups, includeFinal) = visibility
+            combine(matchesFlow, configFlow, quinielasFlow, emailFlow, officialFlow) { matches, config, quinielas, currentEmail, officialPreds ->
+                val includeGroups = config.visibleGroups
+                val includeFinal = config.visibleFinal
+                
+                // Update local properties if they differ (avoiding redundant state changes)
+                if (isFaseGruposActive != config.faseGrupos) isFaseGruposActive = config.faseGrupos
+                if (isFaseFinalActive != config.faseFinal) isFaseFinalActive = config.faseFinal
+                if (isVisibleGroups != config.visibleGroups) isVisibleGroups = config.visibleGroups
+                if (isVisibleFinal != config.visibleFinal) isVisibleFinal = config.visibleFinal
+
                 // Filter matches based on visibility flags
                 val filteredMatches = matches.filter { match ->
                     val isGroup = match.group.startsWith("Grupo")
@@ -135,7 +144,9 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                     } catch (_: Exception) {}
                 }
 
-                val officialScores = officialPreds.map { (res, winners) ->
+                val officialScores = officialPreds.filter { (_, _, isKO) ->
+                    shouldIncludePhase(isKO, includeGroups, includeFinal)
+                }.map { (res, winners, _) ->
                     ScoreCalculator.calculateStats(filteredMatches, res, winners).totalPoints
                 }
 
@@ -225,44 +236,56 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
         isSyncing = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val docId = currentEmail.replace("@", "_").replace(".", "_")
+                
                 val sentSnap = firestore.collection("quinielas")
-                    .whereEqualTo("userEmail", currentEmail)
+                    .document(docId)
                     .get().await()
                 
-                val docId = currentEmail.replace("@", "_").replace(".", "_")
                 val savedSnap = firestore.collection("guardadas")
                     .document(docId)
                     .get().await()
 
                 val dao = database.quinielaDao()
 
-                // Process sent quinielas
-                sentSnap.documents.forEach { doc ->
-                    val qName = doc.getString("quinielaName") ?: ""
-                    val oName = doc.getString("propietarioName") ?: ""
-                    val qCode = doc.getString("quinielaCode") ?: ""
-                    val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
-                    val winnersRaw = doc.get("groupWinners") as? Map<String, String>
-                    
-                    if (qName.isNotBlank() && oName.isNotBlank() && resultsRaw != null) {
-                        val results = resultsRaw.mapValues { (_, v) -> 
-                            MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
+                // Process sent quinielas (New map structure)
+                if (sentSnap.exists()) {
+                    sentSnap.data?.forEach { (_, qData) ->
+                        val qMap = qData as? Map<String, Any>
+                        if (qMap != null) {
+                            val qName = qMap["quinielaName"] as? String ?: ""
+                            val oName = qMap["propietarioName"] as? String ?: ""
+                            val qCode = qMap["quinielaCode"] as? String ?: ""
+                            val resultsRaw = qMap["results"] as? Map<*, *>
+                            val groupWinnersRaw = qMap["groupWinners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            val winnersRaw = qMap["winners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            val mergedWinners = groupWinnersRaw + winnersRaw
+                            
+                            if (qName.isNotBlank() && oName.isNotBlank() && resultsRaw != null) {
+                                val results = resultsRaw.entries.associate { (k, v) ->
+                                    val valMap = v as? Map<*, *>
+                                    k.toString() to MatchResult(
+                                        valMap?.get("homeScore")?.toString() ?: "",
+                                        valMap?.get("awayScore")?.toString() ?: ""
+                                    )
+                                }
+                                
+                                val existing = dao.getQuinielaByNameAndOwner(qName, oName)
+                                val entity = QuinielaEntity(
+                                    id = existing?.id ?: 0,
+                                    quinielaName = qName,
+                                    propietarioName = oName,
+                                    userEmail = currentEmail,
+                                    quinielaCode = qCode,
+                                    resultsJson = gson.toJson(results),
+                                    winnersJson = gson.toJson(mergedWinners),
+                                    isSent = true,
+                                    isFavorite = existing?.isFavorite ?: false,
+                                    isKnockout = qMap["isKnockout"] as? Boolean ?: false
+                                )
+                                dao.insertQuiniela(entity)
+                            }
                         }
-                        
-                        val existing = dao.getQuinielaByNameAndOwner(qName, oName)
-                        val entity = QuinielaEntity(
-                            id = existing?.id ?: 0,
-                            quinielaName = qName,
-                            propietarioName = oName,
-                            userEmail = currentEmail,
-                            quinielaCode = qCode,
-                            resultsJson = gson.toJson(results),
-                            winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
-                            isSent = true,
-                            isFavorite = existing?.isFavorite ?: false,
-                            isKnockout = doc.getBoolean("isKnockout") ?: false
-                        )
-                        dao.insertQuiniela(entity)
                     }
                 }
 
@@ -275,12 +298,18 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                             val qName = qMap["quinielaName"] as? String ?: ""
                             val oName = qMap["propietarioName"] as? String ?: ""
                             val qCode = qMap["quinielaCode"] as? String ?: ""
-                            val resultsRaw = qMap["results"] as? Map<String, Map<String, String>>
-                            val winnersRaw = qMap["groupWinners"] as? Map<String, String>
+                            val resultsRaw = qMap["results"] as? Map<*, *>
+                            val groupWinnersRaw = qMap["groupWinners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            val winnersRaw = qMap["winners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            val mergedWinners = groupWinnersRaw + winnersRaw
 
                             if (qName.isNotBlank() && oName.isNotBlank() && resultsRaw != null) {
-                                val results = resultsRaw.mapValues { (_, v) -> 
-                                    MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
+                                val results = resultsRaw.entries.associate { (k, v) ->
+                                    val valMap = v as? Map<*, *>
+                                    k.toString() to MatchResult(
+                                        valMap?.get("homeScore")?.toString() ?: "",
+                                        valMap?.get("awayScore")?.toString() ?: ""
+                                    )
                                 }
 
                                 val existing = dao.getQuinielaByNameAndOwner(qName, oName)
@@ -291,7 +320,7 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                                     userEmail = currentEmail,
                                     quinielaCode = qCode,
                                     resultsJson = gson.toJson(results),
-                                    winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
+                                    winnersJson = gson.toJson(mergedWinners),
                                     isSent = (qMap["status"] as? String) == "received",
                                     isFavorite = existing?.isFavorite ?: false,
                                     isKnockout = qMap["isKnockout"] as? Boolean ?: false
@@ -330,67 +359,79 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                     isAdmin = userDoc.getBoolean("isAdmin") ?: false
                 }
 
-                // Get active phases
-                val activeSnap = firestore.collection("codigos").document("quinielaActiva").get().await()
-                isFaseGruposActive = activeSnap.getBoolean("faseGrupos") ?: false
-                isFaseFinalActive = activeSnap.getBoolean("faseFinal") ?: false
-                isVisibleGroups = activeSnap.getBoolean("visibleGroups") ?: false
-                isVisibleFinal = activeSnap.getBoolean("visibleFinal") ?: false
+                // Use shared config and codes to avoid redundant Firestore calls
+                val config = MatchRepository.configFlow.value
+                val codesData = MatchRepository.codesMapFlow.value
+                
+                isFaseGruposActive = config.faseGrupos
+                isFaseFinalActive = config.faseFinal
+                isVisibleGroups = config.visibleGroups
+                isVisibleFinal = config.visibleFinal
+                
                 val includeGroups = isVisibleGroups
                 val includeFinal = isVisibleFinal
-
-                // Get access codes / titles
-                val codesSnap = firestore.collection("codigos")
-                    .document("creados")
-                    .get().await()
 
                 // Determine rankTitle based on accessCode
                 var newTitle = "Sin Código"
                 var error: String? = null
                 
-                if (currentCode.isNotBlank() && codesSnap.exists()) {
-                    val codesData = codesSnap.data
+                if (currentCode.isNotBlank()) {
                     var found = false
-                    if (codesData != null) {
-                        for ((title, codeValue) in codesData) {
-                            if (codeValue.toString().trim() == currentCode) {
-                                // Add space before each capital letter (except the first one)
-                                newTitle = title.replace(Regex("(?<=.)(?=\\p{Lu})"), " ")
-                                found = true
-                                break
-                            }
+                    for ((title, codeValue) in codesData) {
+                        if (codeValue.trim() == currentCode) {
+                            newTitle = title.replace(Regex("(?<=.)(?=\\p{Lu})"), " ")
+                            found = true
+                            break
                         }
                     }
-                    if (!found) {
+                    if (!found && codesData.isNotEmpty()) {
                         error = "Código erróneo, verifique el código proporcionado, mantenga Mayúsculas, minúsculas y cuide no poner espacios al final. O deje en blanco el campo para continuar"
                     }
                 }
 
-                // Fetch official participants for the code to calculate global ranking
-                val officialList: List<Pair<Map<String, MatchResult>, Map<String, String>>> = if (currentCode.isNotBlank() && error == null) {
-                    val snapshot = firestore.collection("quinielas")
-                        .whereEqualTo("quinielaCode", currentCode.trim())
-                        .whereEqualTo("paymentReceived", true)
-                        .get().await()
-                    
-                    snapshot.documents.mapNotNull { doc ->
-                        val isKnockout = doc.getBoolean("isKnockout") ?: false
-                        if (!shouldIncludePhase(isKnockout, includeGroups, includeFinal)) return@mapNotNull null
-
-                        val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
-                        val winnersRaw = doc.get("groupWinners") as? Map<String, String>
-                        val res = resultsRaw?.mapValues { (_, v) ->
-                            MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
-                        } ?: emptyMap()
-                        res to (winnersRaw ?: emptyMap())
+                // Fetch official participants for the code ONLY IF code changed or cache empty
+                if (currentCode.isNotBlank() && error == null) {
+                    if (currentCode != cachedAccessCodeForOfficial || officialParticipantsCache.isEmpty()) {
+                        Log.d("UserViewModel", "Fetching official participants from Firestore (NEW GROUPED STRUCTURE)")
+                        // Download all documents in quinielas (1 read per user)
+                        val snapshot = firestore.collection("quinielas").get().await()
+                        
+                        val allPreds = mutableListOf<Triple<Map<String, MatchResult>, Map<String, String>, Boolean>>()
+                        snapshot.documents.forEach { doc ->
+                            val userData = doc.data ?: return@forEach
+                            userData.values.filterIsInstance<Map<String, Any>>().forEach { qMap ->
+                                val code = qMap["quinielaCode"] as? String ?: ""
+                                val paid = qMap["paymentReceived"] as? Boolean ?: false
+                                if (code == currentCode && paid) {
+                                    val isKO = qMap["isKnockout"] as? Boolean ?: false
+                                    val resultsRaw = qMap["results"] as? Map<*, *>
+                                    val groupWinnersRaw = qMap["groupWinners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                                    val winnersRaw = qMap["winners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                                    val mergedWinners = groupWinnersRaw + winnersRaw
+                                    
+                                    val res = resultsRaw?.entries?.associate { (k, v) ->
+                                        val valMap = v as? Map<*, *>
+                                        k.toString() to MatchResult(
+                                            valMap?.get("homeScore")?.toString() ?: "",
+                                            valMap?.get("awayScore")?.toString() ?: ""
+                                        )
+                                    } ?: emptyMap()
+                                    allPreds.add(Triple(res, mergedWinners.entries.associate { it.key.toString() to it.value.toString() }, isKO))
+                                }
+                            }
+                        }
+                        officialParticipantsCache = allPreds
+                        cachedAccessCodeForOfficial = currentCode
                     }
-                } else emptyList()
+                } else {
+                    officialParticipantsCache = emptyList()
+                    cachedAccessCodeForOfficial = ""
+                }
 
                 launch(Dispatchers.Main) {
                     rankTitle = newTitle
                     codeError = error
                     isValidatingCode = false
-                    officialParticipantsFlow.value = officialList
                 }
 
             } catch (e: Exception) {

@@ -128,7 +128,14 @@ fun GroupWinnerPredictionCell(
     val teamName = p.groupWinnerPredictions[groupName] ?: "-"
     val flag = if (teamName == "-") "-" else MatchRepository.getFlag(teamName)
     val isCorrect = isGroupFinished && actualWinnerName != null && teamName == actualWinnerName
-    
+
+    val pointsToDisplay = when {
+        !isCorrect -> 0
+        groupName == "Final" -> 5
+        groupName == "Tercer Lugar" -> 8
+        else -> 0
+    }
+
     Box(
         modifier = Modifier
             .width(80.dp)
@@ -137,12 +144,15 @@ fun GroupWinnerPredictionCell(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = flag, fontSize = 16.sp)
-            if (isCorrect) {
+            if (isCorrect && pointsToDisplay > 0) {
                 Spacer(modifier = Modifier.width(2.dp))
-                PointTagSmall(2)
+                PointTagSmall(pointsToDisplay)
             } else if (isGroupFinished && teamName != "-") {
-                Spacer(modifier = Modifier.width(2.dp))
-                PointTagSmall(0)
+                // Show 0 if it's one of the rewarded categories but wrong
+                if (groupName == "Final" || groupName == "Tercer Lugar") {
+                    Spacer(modifier = Modifier.width(2.dp))
+                    PointTagSmall(0)
+                }
             }
         }
     }

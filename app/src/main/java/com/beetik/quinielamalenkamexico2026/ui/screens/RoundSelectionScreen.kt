@@ -82,8 +82,24 @@ fun RoundSelectionScreen(
     val knockoutMatchesRaw = remember { MatchRepository.allMatches.filter { !it.group.startsWith("Grupo") } }
     val groupMatches = remember { MatchRepository.allMatches.filter { it.group.startsWith("Grupo") } }
     
-    val allMatchesFlow = remember { MatchRepository.getMatchesFlow() }
-    val currentMatches by allMatchesFlow.collectAsState(initial = MatchRepository.allMatches)
+    val currentMatches by MatchRepository.matchesFlow.collectAsState()
+
+    val qualifiedTeams = remember(currentMatches) {
+        val teams = currentMatches
+            .filter { it.group == "16avos de Final" }
+            .flatMap { listOf(it.homeTeam, it.awayTeam) }
+            .filter { it.isNotBlank() && it != "Por definir" }
+            .distinct()
+            .sorted()
+        // Fallback simple si aún no hay equipos en 16avos
+        if (teams.isEmpty()) {
+            MatchRepository.allMatches
+                .flatMap { listOf(it.homeTeam, it.awayTeam) }
+                .filter { it.isNotBlank() && it != "Por definir" }
+                .distinct()
+                .sorted()
+        } else teams
+    }
 
     var expandedRounds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var quinielaName by rememberSaveable { mutableStateOf("") }
@@ -91,6 +107,8 @@ fun RoundSelectionScreen(
     var userEmail by rememberSaveable { mutableStateOf("") }
     var quinielaCode by rememberSaveable { mutableStateOf("") }
     var isSentByServer by rememberSaveable { mutableStateOf(false) }
+    var championWinner by rememberSaveable { mutableStateOf("") }
+    var thirdPlaceWinner by rememberSaveable { mutableStateOf("") }
     
     val matchResultsSaver = remember {
         Saver<Map<String, MatchResult>, Map<String, List<String>>>(
@@ -122,6 +140,10 @@ fun RoundSelectionScreen(
                 quinielaCode = entity.quinielaCode
                 val resultsType = object : TypeToken<Map<String, MatchResult>>() {}.type
                 matchResults = gson.fromJson(entity.resultsJson, resultsType)
+                val winnersType = object : TypeToken<Map<String, String>>() {}.type
+                val winnersMap: Map<String, String> = gson.fromJson(entity.winnersJson, winnersType)
+                championWinner = winnersMap["Final"] ?: ""
+                thirdPlaceWinner = winnersMap["Tercer Lugar"] ?: ""
                 isSentByServer = entity.isSent
             }
         } else if (userViewModel.isLoggedIn) {
@@ -147,9 +169,10 @@ fun RoundSelectionScreen(
         }
     }
 
-    fun saveQuiniela(forceOverwrite: Boolean = true) {
+    fun saveQuiniela(syncToFirebase: Boolean = true) {
         coroutineScope.launch {
             val resultsJson = gson.toJson(matchResults)
+            val winnersJson = gson.toJson(mapOf("Final" to championWinner, "Tercer Lugar" to thirdPlaceWinner))
             val entity = QuinielaEntity(
                 id = if (currentId != -1) currentId else 0,
                 quinielaName = quinielaName,
@@ -157,54 +180,175 @@ fun RoundSelectionScreen(
                 userEmail = userEmail,
                 quinielaCode = quinielaCode,
                 resultsJson = resultsJson,
-                winnersJson = originalData?.winnersJson ?: "{}",
+                winnersJson = winnersJson,
                 isSent = isSentByServer,
                 isKnockout = true
             )
             val newId = withContext(Dispatchers.IO) { database.quinielaDao().insertQuiniela(entity).toInt() }
             currentId = newId
             
-            // Sync to "guardadas"
-            val quinielaData = hashMapOf(
-                "quinielaName" to quinielaName,
-                "propietarioName" to propietarioName,
-                "userEmail" to userEmail,
-                "quinielaCode" to quinielaCode,
-                "results" to matchResults.mapValues { mapOf("homeScore" to it.value.homeScore, "awayScore" to it.value.awayScore) },
-                "isKnockout" to true,
-                "isGroups" to false,
-                "status" to "saved"
-            )
-            val docId = userEmail.lowercase().replace("@", "_").replace(".", "_")
-            val mapKey = "$quinielaName - $propietarioName (KO)"
-            firestore.collection("guardadas").document(docId).set(mapOf(mapKey to quinielaData), SetOptions.merge())
+            if (syncToFirebase) {
+                // Sync to "guardadas"
+                val knockoutIds = MatchRepository.allMatches
+                    .filter { !it.group.startsWith("Grupo") }
+                    .map { it.id }
+                    .toSet()
+
+                val matchesById = currentMatches.associateBy { it.id }
+                val resultsForFirebase = matchResults
+                    .filterKeys { it in knockoutIds }
+                    .mapValues { (matchId, result) ->
+                        val match = matchesById[matchId]
+                        mapOf(
+                            "homeTeam" to (match?.homeTeam ?: ""),
+                            "awayTeam" to (match?.awayTeam ?: ""),
+                            "homeFlag" to (match?.homeFlag ?: ""),
+                            "awayFlag" to (match?.awayFlag ?: ""),
+                            "homeScore" to result.homeScore,
+                            "awayScore" to result.awayScore
+                        )
+                    }
+
+                val quinielaData = hashMapOf(
+                    "quinielaName" to quinielaName,
+                    "propietarioName" to propietarioName,
+                    "userEmail" to userEmail,
+                    "quinielaCode" to quinielaCode,
+                    "results" to resultsForFirebase,
+                    "winners" to mapOf("Final" to championWinner, "Tercer Lugar" to thirdPlaceWinner),
+                    "isKnockout" to true,
+                    "isGroups" to false,
+                    "status" to "saved",
+                    "updatedAt" to System.currentTimeMillis()
+                )
+                val docId = userEmail.lowercase().replace("@", "_").replace(".", "_")
+                val mapKey = "$quinielaName - $propietarioName (KO)"
+                firestore.collection("guardadas").document(docId).set(mapOf(mapKey to quinielaData), SetOptions.merge())
+            }
             
-            Toast.makeText(context, "Quiniela guardada", Toast.LENGTH_SHORT).show()
+            if (!isSentByServer || !syncToFirebase) {
+                Toast.makeText(context, "Quiniela guardada", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
+    val isThirdPlaceEnabledByUI = remember(currentMatches) {
+        val m1 = currentMatches.find { it.id == "R32_1" }
+        val m2 = currentMatches.find { it.id == "R32_2" }
+        val isM1Green = m1?.let { it.started || it.finished || it.isActive } ?: false
+        val isM2Green = m2?.let { it.started || it.finished || it.isActive } ?: false
+        !(isM1Green && isM2Green)
+    }
+
     fun sendQuiniela() {
-        if (quinielaName.isBlank() || propietarioName.isBlank() || userEmail.isBlank()) {
-            Toast.makeText(context, "Faltan datos (Nombre, Propietario o Correo)", Toast.LENGTH_LONG).show()
+        val emailValid = userEmail.isNotBlank() && android.util.Patterns.EMAIL_ADDRESS.matcher(userEmail).matches()
+        
+        if (!emailValid || propietarioName.isBlank() || quinielaName.isBlank()) {
+            Toast.makeText(context, "Correo, Propietario y Nombre de Quiniela son obligatorios.", Toast.LENGTH_LONG).show()
             return
         }
+
+        // Solo es obligatorio si el campo aún está habilitado para edición
+        if (thirdPlaceWinner.isBlank() && isThirdPlaceEnabledByUI) {
+            Toast.makeText(context, "Debes seleccionar un favorito para el Tercer Lugar.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val hasIncompleteScores = matchResults.values.any { 
+            (it.homeScore.isBlank() && it.awayScore.isNotBlank()) || 
+            (it.homeScore.isNotBlank() && it.awayScore.isBlank()) 
+        }
+        
+        if (hasIncompleteScores) {
+            Toast.makeText(context, "Los partidos deben tener marcador completo (ambos equipos) o estar totalmente vacíos.", Toast.LENGTH_LONG).show()
+            return
+        }
+
         coroutineScope.launch {
-            val documentId = "${userEmail}_${quinielaName}_${propietarioName}_KO"
-                .lowercase().replace(" ", "_").replace(".", "_").replace("@", "_")
-            val quinielaData = hashMapOf(
-                "quinielaName" to quinielaName,
-                "propietarioName" to propietarioName,
-                "userEmail" to userEmail,
-                "quinielaCode" to quinielaCode,
-                "results" to matchResults.mapValues { mapOf("homeScore" to it.value.homeScore, "awayScore" to it.value.awayScore) },
-                "isKnockout" to true,
-                "isGroups" to false,
-                "status" to "received"
-            )
-            firestore.collection("quinielas").document(documentId).set(quinielaData).await()
+            val documentId = userEmail.lowercase().replace("@", "_").replace(".", "_")
+            val mapKey = "$quinielaName - $propietarioName (KO)"
+            
+            val knockoutIds = MatchRepository.allMatches
+                .filter { !it.group.startsWith("Grupo") }
+                .map { it.id }
+                .toSet()
+
+            val matchesById = currentMatches.associateBy { it.id }
+            val resultsForFirebase = matchResults
+                .filterKeys { it in knockoutIds }
+                .mapValues { (matchId, result) ->
+                    val match = matchesById[matchId]
+                    mapOf(
+                        "homeTeam" to (match?.homeTeam ?: ""),
+                        "awayTeam" to (match?.awayTeam ?: ""),
+                        "homeFlag" to (match?.homeFlag ?: ""),
+                        "awayFlag" to (match?.awayFlag ?: ""),
+                        "homeScore" to result.homeScore,
+                        "awayScore" to result.awayScore
+                    )
+                }
+
+                val quinielaData = hashMapOf(
+                    "quinielaName" to quinielaName,
+                    "propietarioName" to propietarioName,
+                    "userEmail" to userEmail,
+                    "quinielaCode" to quinielaCode,
+                    "results" to resultsForFirebase,
+                    "winners" to mapOf("Final" to championWinner, "Tercer Lugar" to thirdPlaceWinner),
+                    "isKnockout" to true,
+                    "isGroups" to false,
+                    "status" to "received",
+                    "emailStatus" to "pending",
+                    "paymentReceived" to false,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+
+                // Check if payment was already received in the cloud
+                val doc = firestore.collection("quinielas").document(documentId).get().await()
+                if (doc.exists()) {
+                    val existingQuiniela = doc.get(mapKey) as? Map<*, *>
+                    if (existingQuiniela?.get("paymentReceived") == true) {
+                        quinielaData["paymentReceived"] = true
+                    }
+                }
+
+                firestore.collection("quinielas").document(documentId).set(mapOf(mapKey to quinielaData), SetOptions.merge()).await()
             isSentByServer = true
-            saveQuiniela()
-            Toast.makeText(context, "Quiniela enviada", Toast.LENGTH_LONG).show()
+            saveQuiniela(syncToFirebase = false) // Guardar localmente sin subir a 'guardadas'
+
+            withContext(Dispatchers.IO) {
+                try {
+                    val url = URL("https://n8n.beetikmx.com/webhook/quiniela-finales-recibida")
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.requestMethod = "POST"
+                    connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                    connection.doOutput = true
+
+                    val payload = quinielaData.toMutableMap()
+                    payload["documentId"] = documentId
+                    payload["mapKey"] = mapKey
+                    val jsonPayload = gson.toJson(payload)
+
+                    connection.outputStream.use { os ->
+                        os.write(jsonPayload.toByteArray(Charsets.UTF_8))
+                    }
+
+                    val responseCode = connection.responseCode
+                    connection.disconnect()
+
+                    withContext(Dispatchers.Main) {
+                        if (responseCode in 200..299) {
+                            Toast.makeText(context, "¡Quiniela enviada!", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(context, "¡Registrada! (Error en Webhook)", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "¡Quiniela registrada en Nube!", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
         }
     }
 
@@ -255,8 +399,8 @@ fun RoundSelectionScreen(
                             OutlinedButton(onClick = { saveQuiniela() }, modifier = Modifier.weight(1f), border = BorderStroke(2.dp, Color(0xFF2A398D))) {
                                 Text("Guardar", fontWeight = FontWeight.Bold)
                             }
-                            Button(onClick = { sendQuiniela() }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE61D25)), enabled = !isSentByServer) {
-                                Text(if (isSentByServer) "Enviada ✓" else "Enviar", fontWeight = FontWeight.Bold)
+                            Button(onClick = { sendQuiniela() }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE61D25)), enabled = true) {
+                                Text(if (isSentByServer) "Re-enviar" else "Enviar", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -308,6 +452,36 @@ fun RoundSelectionScreen(
                     }
                 }
 
+                if (userViewModel.isFaseFinalActive) {
+                    item {
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(text = "FAVORITOS", style = MaterialTheme.typography.titleLarge, color = Gold, fontWeight = FontWeight.Bold)
+                            
+                            WinnerDropdownSelector(
+                                label = "Campeón del Mundo",
+                                selectedTeam = championWinner,
+                                allTeams = qualifiedTeams,
+                                onTeamSelected = { team: String -> 
+                                    championWinner = team
+                                    isSentByServer = false 
+                                },
+                                enabled = currentMatches.find { it.group == "Final" }?.let { !it.started && !it.finished && !it.isActive } ?: true
+                            )
+
+                            WinnerDropdownSelector(
+                                label = "Tercer Lugar",
+                                selectedTeam = thirdPlaceWinner,
+                                allTeams = qualifiedTeams,
+                                onTeamSelected = { team: String -> 
+                                    thirdPlaceWinner = team
+                                    isSentByServer = false 
+                                },
+                                enabled = isThirdPlaceEnabledByUI
+                            )
+                        }
+                    }
+                }
+
                 items(visibleRounds) { round ->
                     val unlocked = isRoundUnlocked(round)
                     val isExpanded = expandedRounds.contains(round.id)
@@ -327,8 +501,20 @@ fun RoundSelectionScreen(
                                     match = match,
                                     homeScore = res.homeScore,
                                     awayScore = res.awayScore,
-                                    onHomeScoreChange = { s -> matchResults = matchResults.toMutableMap().apply { this[match.id] = res.copy(homeScore = s) } },
-                                    onAwayScoreChange = { s -> matchResults = matchResults.toMutableMap().apply { this[match.id] = res.copy(awayScore = s) } }
+                                    onHomeScoreChange = { s -> 
+                                        val isBlocked = !match.group.startsWith("Grupo") && (match.started || match.finished || match.isActive)
+                                        if (!isBlocked) {
+                                            matchResults = matchResults.toMutableMap().apply { this[match.id] = res.copy(homeScore = s) }
+                                            isSentByServer = false
+                                        }
+                                    },
+                                    onAwayScoreChange = { s -> 
+                                        val isBlocked = !match.group.startsWith("Grupo") && (match.started || match.finished || match.isActive)
+                                        if (!isBlocked) {
+                                            matchResults = matchResults.toMutableMap().apply { this[match.id] = res.copy(awayScore = s) }
+                                            isSentByServer = false
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -356,6 +542,78 @@ fun RoundSelectionScreen(
             },
             confirmButton = { TextButton(onClick = { showLoadDialog = false }) { Text("Cerrar") } }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WinnerDropdownSelector(
+    label: String,
+    selectedTeam: String,
+    allTeams: List<String>,
+    onTeamSelected: (String) -> Unit,
+    enabled: Boolean = true
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        ExposedDropdownMenuBox(
+            expanded = expanded && enabled,
+            onExpandedChange = { if (enabled) expanded = !expanded },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = selectedTeam,
+                onValueChange = {},
+                readOnly = true,
+                enabled = enabled,
+                label = { Text(label) },
+                trailingIcon = { if (enabled) ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                leadingIcon = {
+                    if (selectedTeam.isNotEmpty()) {
+                        Text(
+                            text = MatchRepository.getFlag(selectedTeam),
+                            modifier = Modifier.padding(start = 8.dp),
+                            fontSize = 20.sp
+                        )
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Gold,
+                    unfocusedBorderColor = Gold.copy(alpha = 0.5f),
+                    focusedLabelColor = Gold,
+                    unfocusedLabelColor = Color.White.copy(alpha = 0.6f),
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                ),
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+            ) {
+                allTeams.forEach { team ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(MatchRepository.getFlag(team), fontSize = 18.sp)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(team, style = MaterialTheme.typography.bodyLarge)
+                            }
+                        },
+                        onClick = {
+                            onTeamSelected(team)
+                            expanded = false
+                        },
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
     }
 }
 

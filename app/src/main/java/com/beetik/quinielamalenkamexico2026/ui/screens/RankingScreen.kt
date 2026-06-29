@@ -145,7 +145,13 @@ fun RankingScreen(
                     }
                 }
                 groupWinnersCache.forEach { (gName, winner) ->
-                    if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
+                    if (winner != null && winner == p.groupWinnerPredictions[gName]) {
+                        pts += when (gName) {
+                            "Final" -> 5
+                            "Tercer Lugar" -> 8
+                            else -> 0
+                        }
+                    }
                 }
                 p.id to pts
             }
@@ -172,7 +178,13 @@ fun RankingScreen(
                     }
                 }
                 baseGroupWinnersCache.forEach { (gName, winner) ->
-                    if (winner != null && winner == p.groupWinnerPredictions[gName]) pts += 2
+                    if (winner != null && winner == p.groupWinnerPredictions[gName]) {
+                        pts += when (gName) {
+                            "Final" -> 5
+                            "Tercer Lugar" -> 8
+                            else -> 0
+                        }
+                    }
                 }
                 p.id to pts
             }
@@ -267,9 +279,16 @@ fun RankingScreen(
                     if (groupMatches.lastOrNull()?.id == match.id && groupMatches.all { getEffectiveScore(it, resultsMap) != null }) {
                         val winner = allGroupWinners[match.group]
                         if (winner != null) {
-                            baseParticipants.forEach { p ->
-                                if (p.groupWinnerPredictions[match.group] == winner) {
-                                    runningScores[p.id] = (runningScores[p.id] ?: 0) + 2
+                            val bonus = when (match.group) {
+                                "Final" -> 5
+                                "Tercer Lugar" -> 8
+                                else -> 0
+                            }
+                            if (bonus > 0) {
+                                baseParticipants.forEach { p ->
+                                    if (p.groupWinnerPredictions[match.group] == winner) {
+                                        runningScores[p.id] = (runningScores[p.id] ?: 0) + bonus
+                                    }
                                 }
                             }
                         }

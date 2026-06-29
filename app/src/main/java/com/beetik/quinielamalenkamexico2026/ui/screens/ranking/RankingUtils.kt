@@ -48,4 +48,10 @@ fun getGroupWinner(groupName: String, matches: List<Match>, results: Map<String,
     return std.values.sortedWith(compareByDescending<TeamStats> { it.points }.thenByDescending { it.gs - it.gc }.thenByDescending { it.gs }).firstOrNull()?.let { it.name to it.flag }
 }
 
-fun getPointColor(points: Int): Color = when (points) { 2 -> Color(0xFF4CAF50); 1 -> Color(0xFF2196F3); else -> Color.Gray }
+fun getPointColor(points: Int): Color = when (points) { 
+    2 -> Color(0xFF4CAF50) // Verde
+    1 -> Color(0xFF2196F3) // Azul
+    5 -> Color(0xFFFFD700) // Oro
+    8 -> Color(0xFFFF9800) // Naranja/Ambar
+    else -> Color.Gray 
+}

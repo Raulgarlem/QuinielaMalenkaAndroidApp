@@ -1,8 +1,9 @@
 package com.beetik.quinielamalenkamexico2026.ui.screens.ranking
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -60,34 +61,56 @@ fun MatchesListView(
 
     LazyColumn(
         state = listState,
-        modifier = Modifier
-            .fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(if (isLandscape) 8.dp else 12.dp),
         contentPadding = PaddingValues(bottom = 16.dp)
     ) {
         if (headerContent != null) {
-            item {
-                headerContent()
-            }
+            item { headerContent() }
         }
         
-        items(filteredMatches, key = { it.id }) { match ->
+        itemsIndexed(filteredMatches, key = { _, match -> match.id }) { index, match ->
+            
+            // Phase divider logic
+            val prevMatch = if (index > 0) filteredMatches[index - 1] else null
+            val showDivider = remember(match, prevMatch) {
+                val knockoutGroups = listOf("16avos de Final", "Octavos de Final", "Cuartos de Final", "Semifinales", "Tercer Lugar", "Final")
+                val isKnockout = match.group in knockoutGroups
+                val wasKnockout = prevMatch?.group in knockoutGroups
+                
+                if (isKnockout) {
+                    if (!wasKnockout) {
+                        // First knockout match
+                        "PRIMERA PARTE FINALIZADA • SEGUNDA PARTE DE LA QUINIELA"
+                    } else if (match.group != prevMatch?.group) {
+                        // Phase change (Octavos -> Cuartos, etc.)
+                        match.group.uppercase()
+                    } else null
+                } else null
+            }
+
+            if (showDivider != null) {
+                PhaseDivider(text = showDivider)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             val result = matchResults[match.id]
             
-            // Pre-calculate date/time and points outside the complex item if possible, 
-            // or just ensure the item itself is efficient.
-            val matchDateTime = remember(match.date, match.time) {
+            // Optimization: Skip heavy parsing if possible
+            val displayDate = remember(match.date) {
                 try {
-                    sdfCDMX.parse("${match.date} ${match.time}")
-                } catch (_: Exception) {
-                    null
-                }
+                    val parts = match.date.split("-")
+                    if (parts.size == 3) {
+                        val months = listOf("", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+                        val monthIdx = parts[1].toIntOrNull() ?: 0
+                        "${parts[2]} de ${months.getOrElse(monthIdx) { "" }}"
+                    } else match.date
+                } catch (_: Exception) { match.date }
             }
             
-            val displayTime = remember(matchDateTime) { matchDateTime?.let { sdfLocalTime.format(it) } ?: match.time }
-            val displayDate = remember(matchDateTime) { matchDateTime?.let { sdfLocalDisplayDate.format(it) } ?: match.date }
+            val displayTime = match.time
 
-            val points = remember(match, result) {
+            val points = remember(match.realHomeScore, match.realAwayScore, result) {
                 if (match.realHomeScore != null && match.realAwayScore != null && result != null) {
                     val hP = result.homeScore.toIntOrNull()
                     val aP = result.awayScore.toIntOrNull()
@@ -98,10 +121,36 @@ fun MatchesListView(
                 } else "-"
             }
 
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                InternalMatchItem(match, result, displayDate, displayTime, points, isLandscape)
-            }
+            InternalMatchItem(
+                match = match, 
+                prediction = result, 
+                displayDate = displayDate, 
+                displayTime = displayTime, 
+                points = points, 
+                isLandscape = isLandscape
+            )
         }
+    }
+}
+
+@Composable
+private fun PhaseDivider(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .background(Gold.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+            .padding(vertical = 6.dp, horizontal = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.ExtraBold,
+            color = Gold,
+            textAlign = TextAlign.Center,
+            letterSpacing = 1.sp
+        )
     }
 }
 
@@ -115,7 +164,7 @@ private fun InternalMatchItem(
     isLandscape: Boolean
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = androidx.compose.foundation.BorderStroke(
@@ -123,15 +172,15 @@ private fun InternalMatchItem(
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
     ) {
+        val isLive = match.started && match.isActive
+        val isFinished = match.finished && !match.isActive
+        
         Column(modifier = Modifier.padding(if (isLandscape) 8.dp else 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val isLive = match.started && match.isActive
-                val isFinished = match.finished && !match.isActive
-                
                 Text(
                     text = "${match.group} • $displayDate",
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = if (isLandscape) 9.sp else 11.sp),
@@ -206,9 +255,6 @@ private fun InternalMatchItem(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(horizontal = 8.dp)
                 ) {
-                    val isLive = match.started && match.isActive
-                    val isFinished = match.finished && !match.isActive
-                    
                     if (isLive || isFinished) {
                         Surface(
                             color = if (isLive) Color(0xFFE91E63).copy(alpha = 0.15f) else Color(0xFF4CAF50).copy(alpha = 0.15f),
@@ -232,7 +278,7 @@ private fun InternalMatchItem(
                         )
                     }
                     
-                    val realScoreText = if (match.started && match.realHomeScore != null && match.realAwayScore != null) {
+                    val realScoreText = if ((match.started || match.finished) && match.realHomeScore != null && match.realAwayScore != null) {
                         "${match.realHomeScore} - ${match.realAwayScore}"
                     } else {
                         "-"

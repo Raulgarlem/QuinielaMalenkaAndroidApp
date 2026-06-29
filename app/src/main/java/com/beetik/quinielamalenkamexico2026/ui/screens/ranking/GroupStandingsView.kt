@@ -8,6 +8,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -16,7 +18,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.beetik.quinielamalenkamexico2026.data.MatchRepository
 import com.beetik.quinielamalenkamexico2026.model.Match
 import com.beetik.quinielamalenkamexico2026.ui.theme.Gold
 
@@ -27,12 +28,16 @@ fun GroupStandingsView(
     userGroupWinners: Map<String, String>,
     headerContent: (@Composable () -> Unit)? = null
 ) {
-    val groups = remember(allMatches) { allMatches.map { it.group }.distinct().sorted() }
+    val groupMatches = remember(allMatches) { allMatches.filter { it.group.startsWith("Grupo") } }
+    val matchesByGroup = remember(groupMatches) { groupMatches.groupBy { it.group } }
+    val groups = remember(matchesByGroup) { matchesByGroup.keys.sorted() }
     
-    // Pre-calculate all stats to avoid doing it during scroll (VITAL for performance)
-    val allGroupStats = remember(groups, resultsMap, allMatches) {
-        groups.associateWith { groupName ->
-            calculateGroupStats(groupName, allMatches, resultsMap)
+    // Use derivedStateOf to react to resultsMap changes WITHOUT re-triggering remember
+    val allGroupStats by remember(groups, matchesByGroup) {
+        derivedStateOf {
+            groups.associateWith { groupName ->
+                calculateGroupStatsFromList(matchesByGroup[groupName] ?: emptyList(), resultsMap)
+            }
         }
     }
 
@@ -155,8 +160,7 @@ data class TeamStandings(
     var gc: Int = 0
 )
 
-private fun calculateGroupStats(groupName: String, matches: List<Match>, results: Map<String, Pair<Int, Int>>): List<TeamStandings> {
-    val groupMatches = matches.filter { it.group == groupName }
+private fun calculateGroupStatsFromList(groupMatches: List<Match>, results: Map<String, Pair<Int, Int>>): List<TeamStandings> {
     val teams = groupMatches.flatMap { listOf(it.homeTeam to it.homeFlag, it.awayTeam to it.awayFlag) }.distinctBy { it.first }
     val std = teams.associate { it.first to TeamStandings(it.first, it.second) }.toMutableMap()
     

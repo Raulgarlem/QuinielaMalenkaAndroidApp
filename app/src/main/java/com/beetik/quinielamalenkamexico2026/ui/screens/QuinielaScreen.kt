@@ -328,12 +328,21 @@ fun QuinielaScreen(
     }
 
     fun sendQuinielaToFirebase(collectionPath: String) {
-        val resultsForFirebase = matchResults.mapValues { (_, result) ->
-            mapOf(
-                "homeScore" to result.homeScore,
-                "awayScore" to result.awayScore
-            )
-        }
+        val groupIds = MatchRepository.allMatches
+            .filter { it.group.startsWith("Grupo") }
+            .map { it.id }
+            .toSet()
+
+        val resultsForFirebase = matchResults
+            .filterKeys { it in groupIds }
+            .mapValues { (_, result) ->
+                mapOf(
+                    "homeScore" to result.homeScore,
+                    "awayScore" to result.awayScore
+                )
+            }
+
+        val filteredGroupWinners = groupWinners.filterKeys { it.startsWith("Grupo") }
 
         val quinielaData = hashMapOf(
             "quinielaName" to quinielaName.trim(),
@@ -341,7 +350,7 @@ fun QuinielaScreen(
             "userEmail" to userEmail.lowercase().trim(),
             "quinielaCode" to quinielaCode.trim().ifBlank { "Male2026" },
             "results" to resultsForFirebase,
-            "groupWinners" to groupWinners,
+            "groupWinners" to filteredGroupWinners,
             "updatedAt" to System.currentTimeMillis(),
             "status" to if (collectionPath == "quinielas") "received" else "saved",
             "isGroups" to true,
@@ -357,50 +366,56 @@ fun QuinielaScreen(
                 .replace(".", "_")
                 .replace("@", "_")
 
-            firestore.collection("quinielas")
-                .document(documentId)
-                .set(quinielaData)
-                .addOnSuccessListener {
-                    isSentByServer = true
-                    saveQuinielaToRoom(forceOverwrite = true) // Update local status as well
-                    
-                    coroutineScope.launch(Dispatchers.IO) {
-                        try {
-                            val url = URL("https://n8n.beetikmx.com/webhook/quiniela-recibida")
-                            val connection = url.openConnection() as HttpURLConnection
-                            connection.requestMethod = "POST"
-                            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                            connection.doOutput = true
+            firestore.collection("quinielas").document(documentId).get().addOnSuccessListener { doc ->
+                if (doc.exists() && doc.getBoolean("paymentReceived") == true) {
+                    quinielaData["paymentReceived"] = true
+                }
 
-                            val payload = quinielaData.toMutableMap()
-                            payload["documentId"] = documentId
-                            val jsonPayload = gson.toJson(payload)
+                firestore.collection("quinielas")
+                    .document(documentId)
+                    .set(quinielaData)
+                    .addOnSuccessListener {
+                        isSentByServer = true
+                        saveQuinielaToRoom(forceOverwrite = true) // Update local status as well
+                        
+                        coroutineScope.launch(Dispatchers.IO) {
+                            try {
+                                val url = URL("https://n8n.beetikmx.com/webhook/quiniela-recibida")
+                                val connection = url.openConnection() as HttpURLConnection
+                                connection.requestMethod = "POST"
+                                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                                connection.doOutput = true
 
-                            connection.outputStream.use { os ->
-                                os.write(jsonPayload.toByteArray(Charsets.UTF_8))
-                            }
+                                val payload = quinielaData.toMutableMap()
+                                payload["documentId"] = documentId
+                                val jsonPayload = gson.toJson(payload)
 
-                            val responseCode = connection.responseCode
-                            connection.disconnect()
-
-                            withContext(Dispatchers.Main) {
-                                if (responseCode in 200..299) {
-                                    Toast.makeText(context, "¡Quiniela enviada correctamente!", Toast.LENGTH_LONG).show()
-                                } else {
-                                    // Webhook failed but Firestore succeeded
-                                    Toast.makeText(context, "¡Quiniela registrada! (Error en Webhook)", Toast.LENGTH_LONG).show()
+                                connection.outputStream.use { os ->
+                                    os.write(jsonPayload.toByteArray(Charsets.UTF_8))
                                 }
-                            }
-                        } catch (_: Exception) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "¡Quiniela registrada!", Toast.LENGTH_LONG).show()
+
+                                val responseCode = connection.responseCode
+                                connection.disconnect()
+
+                                withContext(Dispatchers.Main) {
+                                    if (responseCode in 200..299) {
+                                        Toast.makeText(context, "¡Quiniela enviada correctamente!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        // Webhook failed but Firestore succeeded
+                                        Toast.makeText(context, "¡Quiniela registrada! (Error en Webhook)", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            } catch (_: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "¡Quiniela registrada!", Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     }
-                }
-                .addOnFailureListener { error ->
-                    Toast.makeText(context, "Error al sincronizar con la nube: ${error.message}", Toast.LENGTH_LONG).show()
-                }
+                    .addOnFailureListener { error ->
+                        Toast.makeText(context, "Error al sincronizar con la nube: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
+            }
         } else {
             // For "guardadas"
             val documentId = userEmail.lowercase().trim().replace("@", "_").replace(".", "_")
@@ -446,12 +461,18 @@ fun QuinielaScreen(
                     val qName = doc.getString("quinielaName") ?: ""
                     val oName = doc.getString("propietarioName") ?: ""
                     val qCode = doc.getString("quinielaCode") ?: ""
-                    val resultsRaw = doc.get("results") as? Map<String, Map<String, String>>
-                    val winnersRaw = doc.get("groupWinners") as? Map<String, String>
+                    val resultsRaw = doc.get("results") as? Map<*, *>
+                    val groupWinnersRaw = doc.get("groupWinners") as? Map<*, *> ?: emptyMap<Any, Any>()
+                    val winnersRaw = doc.get("winners") as? Map<*, *> ?: emptyMap<Any, Any>()
+                    val mergedWinners = groupWinnersRaw + winnersRaw
                     
                     if (qName.isNotBlank() && oName.isNotBlank() && resultsRaw != null) {
-                        val results = resultsRaw.mapValues { (_, v) -> 
-                            MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
+                        val results = resultsRaw.entries.associate { (k, v) ->
+                            val valMap = v as? Map<*, *>
+                            k.toString() to MatchResult(
+                                valMap?.get("homeScore")?.toString() ?: "",
+                                valMap?.get("awayScore")?.toString() ?: ""
+                            )
                         }
                         
                         tempList.add(QuinielaEntity(
@@ -461,7 +482,7 @@ fun QuinielaScreen(
                             userEmail = currentEmail,
                             quinielaCode = qCode,
                             resultsJson = gson.toJson(results),
-                            winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
+                            winnersJson = gson.toJson(mergedWinners),
                             isSent = true,
                             isKnockout = doc.getBoolean("isKnockout") ?: false
                         ))
@@ -477,12 +498,18 @@ fun QuinielaScreen(
                             val qName = qMap["quinielaName"] as? String ?: ""
                             val oName = qMap["propietarioName"] as? String ?: ""
                             val qCode = qMap["quinielaCode"] as? String ?: ""
-                            val resultsRaw = qMap["results"] as? Map<String, Map<String, String>>
-                            val winnersRaw = qMap["groupWinners"] as? Map<String, String>
+                            val resultsRaw = qMap["results"] as? Map<*, *>
+                            val groupWinnersRaw = qMap["groupWinners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            val winnersRaw = qMap["winners"] as? Map<*, *> ?: emptyMap<Any, Any>()
+                            val mergedWinners = groupWinnersRaw + winnersRaw
 
                             if (qName.isNotBlank() && oName.isNotBlank() && resultsRaw != null) {
-                                val results = resultsRaw.mapValues { (_, v) -> 
-                                    MatchResult(v["homeScore"] ?: "", v["awayScore"] ?: "")
+                                val results = resultsRaw.entries.associate { (k, v) ->
+                                    val valMap = v as? Map<*, *>
+                                    k.toString() to MatchResult(
+                                        valMap?.get("homeScore")?.toString() ?: "",
+                                        valMap?.get("awayScore")?.toString() ?: ""
+                                    )
                                 }
 
                                 tempList.add(QuinielaEntity(
@@ -492,7 +519,7 @@ fun QuinielaScreen(
                                     userEmail = currentEmail,
                                     quinielaCode = qCode,
                                     resultsJson = gson.toJson(results),
-                                    winnersJson = gson.toJson(winnersRaw ?: emptyMap<String, String>()),
+                                    winnersJson = gson.toJson(mergedWinners),
                                     isSent = (qMap["status"] as? String) == "received",
                                     isKnockout = qMap["isKnockout"] as? Boolean ?: false
                                 ))

@@ -3,13 +3,15 @@ package com.beetik.quinielamalenkamexico2026.data
 import android.util.Log
 import com.beetik.quinielamalenkamexico2026.model.Match
 import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.*
 
 object MatchRepository {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val countryFlags = mapOf(
         "México" to "🇲🇽", "Sudáfrica" to "🇿🇦", "Corea del Sur" to "🇰🇷", "República Checa" to "🇨🇿",
         "Canadá" to "🇨🇦", "Bosnia y Herzegovina" to "🇧🇦", "Qatar" to "🇶🇦", "Suiza" to "🇨🇭",
@@ -163,9 +165,44 @@ object MatchRepository {
         Match("FIN", "Final", "2026-07-19", "17:00", "Por definir", "🏳️", "Por definir", "🏳️")
     )
 
-    fun getMatchesFlow(): Flow<List<Match>> = callbackFlow {
+    data class AppConfig(
+        val faseGrupos: Boolean = true,
+        val faseFinal: Boolean = true,
+        val visibleGroups: Boolean = true,
+        val visibleFinal: Boolean = false
+    )
+
+    val configFlow: StateFlow<AppConfig> = callbackFlow {
         val db = FirebaseFirestore.getInstance()
-        Log.d("MatchRepository", "Starting getMatchesFlow collection listener on 'matches'")
+        val listener = db.collection("codigos").document("quinielaActiva")
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null && snapshot.exists()) {
+                    trySend(AppConfig(
+                        faseGrupos = snapshot.getBoolean("faseGrupos") ?: true,
+                        faseFinal = snapshot.getBoolean("faseFinal") ?: true,
+                        visibleGroups = snapshot.getBoolean("visibleGroups") ?: true,
+                        visibleFinal = snapshot.getBoolean("visibleFinal") ?: false
+                    ))
+                }
+            }
+        awaitClose { listener.remove() }
+    }.stateIn(scope, SharingStarted.Lazily, AppConfig())
+
+    val codesMapFlow: StateFlow<Map<String, String>> = callbackFlow {
+        val db = FirebaseFirestore.getInstance()
+        val listener = db.collection("codigos").document("creados")
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null && snapshot.exists()) {
+                    val map = snapshot.data?.mapValues { it.value.toString().trim() } ?: emptyMap()
+                    trySend(map)
+                }
+            }
+        awaitClose { listener.remove() }
+    }.stateIn(scope, SharingStarted.Lazily, emptyMap())
+
+    val matchesFlow: StateFlow<List<Match>> = callbackFlow {
+        val db = FirebaseFirestore.getInstance()
+        Log.d("MatchRepository", "Starting SHARED getMatchesFlow collection listener")
         
         val listener = db.collection("matches")
             .addSnapshotListener { snapshot, error ->
@@ -175,54 +212,49 @@ object MatchRepository {
                 }
 
                 if (snapshot != null) {
-                    Log.d("MatchRepository", "Firebase snapshot received with ${snapshot.size()} documents")
-                    
-                    // Mapa de resultados finales, inicializado con los estáticos
                     val finalMatches = allMatches.associateBy { it.id }.toMutableMap()
                     
                     snapshot.documents.forEach { doc ->
+                        // ... (keep the same logic)
                         val data = doc.data ?: return@forEach
-                        
-                        // Extraer el mapa 'elements' de forma segura
                         @Suppress("UNCHECKED_CAST")
                         fun asMap(value: Any?): Map<String, Any>? = value as? Map<String, Any>
                         val elements = asMap(data["elements"])
                         
-                        // 1. Determinar el matchCode (M73, R32_1, etc.) o ID numérico (73)
                         val mCodeRaw = listOf(
-                            elements?.get("matchCode"),
-                            data["matchCode"],
-                            elements?.get("docId"),
-                            data["docId"],
-                            elements?.get("firebaseDocId"),
-                            data["firebaseDocId"],
-                            elements?.get("API_id"),
-                            data["API_id"],
-                            elements?.get("matchNumber"),
-                            data["matchNumber"],
-                            doc.id
+                            elements?.get("matchCode"), data["matchCode"], elements?.get("docId"), data["docId"],
+                            elements?.get("firebaseDocId"), data["firebaseDocId"], elements?.get("API_id"), data["API_id"],
+                            elements?.get("matchNumber"), data["matchNumber"], doc.id
                         ).firstNotNullOfOrNull { value ->
                             value?.toString()?.trim()?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
                         } ?: doc.id
-                        var mCode = mCodeRaw
+                        var mCode = mCodeRaw.uppercase()
                         
-                        // Mapeo M73 o "73" -> R32_1 (Índice 72)
-                        val numericPart = if (mCode.startsWith("M")) {
-                            mCode.substring(1).toIntOrNull()
-                        } else {
-                            mCode.toIntOrNull()
+                        mCode = when (mCode) {
+                            "3RD_PLACE", "3ER_LUGAR", "TERCER_LUGAR", "THIRD_PLACE", "3RD" -> "3RD"
+                            "FINAL", "FINALE", "FIN" -> "FIN"
+                            else -> mCode
                         }
-
+                        
+                        val numericPart = if (mCode.startsWith("M")) mCode.substring(1).toIntOrNull() else mCode.toIntOrNull()
                         if (numericPart != null && numericPart >= 1 && numericPart <= allMatches.size) {
                             mCode = allMatches[numericPart - 1].id
                         }
                         
                         val static = finalMatches[mCode] ?: return@forEach
 
-                        // 2. Extraer equipos con fallback directo (Prioridad: elements > raíz)
-                        fun Map<String, Any>.findValue(key: String): Any? =
-                            entries.find { it.key.equals(key, ignoreCase = true) }?.value
-
+                        fun Map<String, Any>.findValue(key: String): Any? = entries.find { it.key.equals(key, ignoreCase = true) }?.value
+                        fun resolveBoolean(value: Any?): Boolean = when (value) {
+                            is Boolean -> value
+                            is String -> value.lowercase() == "true"
+                            is Number -> value.toInt() != 0
+                            else -> false
+                        }
+                        fun resolveInt(value: Any?): Int? = when (value) {
+                            is Number -> value.toInt()
+                            is String -> value.toIntOrNull()
+                            else -> null
+                        }
                         fun resolveString(value: Any?): String? {
                             val resolved = when (value) {
                                 null -> null
@@ -230,8 +262,7 @@ object MatchRepository {
                                     listOf("name", "team", "teamName", "nombre", "displayName", "shortName", "value")
                                         .firstNotNullOfOrNull { nestedKey ->
                                             value.entries.find { it.key?.toString()?.equals(nestedKey, ignoreCase = true) == true }
-                                                ?.value
-                                                ?.let(::resolveString)
+                                                ?.value?.let(::resolveString)
                                         }
                                 }
                                 else -> value.toString().trim()
@@ -242,9 +273,7 @@ object MatchRepository {
                         fun getTeam(vararg keys: String): String? {
                             val sources = listOfNotNull(elements, data)
                             for (key in keys) {
-                                sources.firstNotNullOfOrNull { source ->
-                                    resolveString(source.findValue(key))
-                                }?.let { return it }
+                                sources.firstNotNullOfOrNull { source -> resolveString(source.findValue(key)) }?.let { return it }
                             }
                             return null
                         }
@@ -254,9 +283,7 @@ object MatchRepository {
                             for (path in paths) {
                                 for (source in sources) {
                                     var current: Any? = source
-                                    path.forEach { key ->
-                                        current = asMap(current)?.findValue(key)
-                                    }
+                                    path.forEach { key -> current = asMap(current)?.findValue(key) }
                                     resolveString(current)?.let { return it }
                                 }
                             }
@@ -268,17 +295,14 @@ object MatchRepository {
 
                         fun normalizeGroup(firebaseGroup: String?): String {
                             val group = firebaseGroup?.trim().orEmpty()
-                            val normalized = group.lowercase()
-                                .removePrefix("grupo ")
-                                .removePrefix("group ")
-                                .trim()
+                            val normalized = group.lowercase().removePrefix("grupo ").removePrefix("group ").trim()
                             return when (normalized) {
                                 "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l" -> "Grupo ${normalized.uppercase()}"
                                 "r32", "round32", "round_of_32", "16avos", "dieciseisavos" -> "16avos de Final"
                                 "r16", "round16", "round_of_16", "octavos" -> "Octavos de Final"
                                 "qf", "quarterfinal", "quarterfinals", "cuartos" -> "Cuartos de Final"
                                 "sf", "semifinal", "semifinals", "semifinales" -> "Semifinales"
-                                "3rd", "third_place", "tercer lugar" -> "Tercer Lugar"
+                                "3rd", "third_place", "tercer lugar", "3er lugar", "3er_lugar", "tercer_lugar" -> "Tercer Lugar"
                                 "fin", "final" -> "Final"
                                 else -> firebaseGroup ?: static.group
                             }
@@ -287,7 +311,6 @@ object MatchRepository {
                         fun normalizeDate(firebaseDate: String?): String {
                             val rawDate = firebaseDate?.trim()?.substringBefore(" ").orEmpty()
                             if (rawDate.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) return rawDate
-
                             val slashParts = rawDate.split("/")
                             if (slashParts.size == 3) {
                                 val month = slashParts[0].padStart(2, '0')
@@ -295,69 +318,35 @@ object MatchRepository {
                                 val year = slashParts[2]
                                 if (year.length == 4) return "$year-$month-$day"
                             }
-
                             return static.date
                         }
 
-                        val hTeam = resolvedTeam(
-                            static.homeTeam,
-                            getTeam(
-                                "homeTeam", "homeTeamName", "home", "localTeam", "localTeamName",
-                                "equipoLocal", "local", "teamHome", "team1", "homeName", "localName",
-                                "home_team", "home_name", "local_team", "local_name"
-                            ) ?: getNestedTeam(
-                                listOf("home", "team"), listOf("home", "name"),
-                                listOf("local", "team"), listOf("local", "name"),
-                                listOf("teams", "home"), listOf("teams", "local"),
-                                listOf("participants", "home"), listOf("participants", "local")
-                            )
-                        )
-                        val aTeam = resolvedTeam(
-                            static.awayTeam,
-                            getTeam(
-                                "awayTeam", "awayTeamName", "away", "visitorTeam", "visitorTeamName",
-                                "visitanteTeam", "visitanteTeamName", "equipoVisitante", "visitante",
-                                "teamAway", "team2", "awayName", "visitorName", "visitanteName",
-                                "away_team", "away_name", "visitor_team", "visitor_name", "visitante_team"
-                            ) ?: getNestedTeam(
-                                listOf("away", "team"), listOf("away", "name"),
-                                listOf("visitor", "team"), listOf("visitor", "name"),
-                                listOf("visitante", "team"), listOf("visitante", "name"),
-                                listOf("teams", "away"), listOf("teams", "visitor"), listOf("teams", "visitante"),
-                                listOf("participants", "away"), listOf("participants", "visitor"), listOf("participants", "visitante")
-                            )
-                        )
+                        val hTeam = resolvedTeam(static.homeTeam, getTeam("homeTeam", "homeTeamName", "home", "localTeam", "localTeamName", "equipoLocal", "local", "teamHome", "team1", "homeName", "localName") ?: getNestedTeam(listOf("home", "team"), listOf("home", "name"), listOf("local", "team"), listOf("local", "name"), listOf("teams", "home"), listOf("teams", "local")))
+                        val aTeam = resolvedTeam(static.awayTeam, getTeam("awayTeam", "awayTeamName", "away", "visitorTeam", "visitorTeamName", "visitanteTeam", "visitanteTeamName", "equipoVisitante", "visitante", "teamAway", "team2", "awayName", "visitorName") ?: getNestedTeam(listOf("away", "team"), listOf("away", "name"), listOf("visitor", "team"), listOf("visitor", "name"), listOf("visitante", "team"), listOf("visitante", "name"), listOf("teams", "away"), listOf("teams", "visitor")))
                         
-                        if (doc.id == "M73" || mCode == "R32_1") {
-                            Log.d("MatchRepository", "DEBUG M73: docId=${doc.id}, h=$hTeam, a=$aTeam, hasElements=${elements != null}")
-                        }
+                        val status = (elements?.get("status") ?: data["status"])?.toString()?.uppercase() ?: ""
+                        val isStartedByStatus = status == "IN_PLAY" || status == "LIVE" || status == "FINISHED"
+                        val isFinishedByStatus = status == "FINISHED"
 
-                        // 3. Actualizar objeto
                         finalMatches[mCode] = static.copy(
-                            homeTeam = hTeam,
-                            homeFlag = getFlag(hTeam),
-                            awayTeam = aTeam,
-                            awayFlag = getFlag(aTeam),
+                            homeTeam = hTeam, homeFlag = getFlag(hTeam), awayTeam = aTeam, awayFlag = getFlag(aTeam),
                             group = normalizeGroup(getTeam("group", "grupo", "groupName", "type")),
                             date = normalizeDate(getTeam("date", "fecha", "api_local_date")),
                             time = getTeam("time", "hora", "timeMx") ?: static.time,
-                            realHomeScore = getTeam("homeScore", "golesLocal")?.toDoubleOrNull()?.toInt(),
-                            realAwayScore = getTeam("awayScore", "golesVisitante")?.toDoubleOrNull()?.toInt(),
-                            started = (elements?.get("started") ?: data["started"]) as? Boolean ?: static.started,
-                            finished = (elements?.get("finished") ?: data["finished"]) as? Boolean ?: static.finished,
-                            isActive = (elements?.get("isActive") ?: data["isActive"]) as? Boolean ?: static.isActive,
+                            realHomeScore = resolveInt(getTeam("homeScore", "golesLocal")),
+                            realAwayScore = resolveInt(getTeam("awayScore", "golesVisitante")),
+                            started = resolveBoolean(elements?.get("started") ?: data["started"]) || isStartedByStatus || static.started,
+                            finished = resolveBoolean(elements?.get("finished") ?: data["finished"]) || isFinishedByStatus || static.finished,
+                            isActive = resolveBoolean(elements?.get("isActive") ?: data["isActive"]) || (status == "IN_PLAY" || status == "LIVE") || static.isActive,
                             firebaseId = doc.id
                         )
                     }
-                    
                     val sortedList = finalMatches.values.sortedWith(compareBy({ it.date }, { it.time }, { it.id }))
-                    Log.d("MatchRepository", "Emitting ${sortedList.size} matches to UI")
                     this.trySend(sortedList)
                 }
             }
-        awaitClose { 
-            Log.d("MatchRepository", "Closing getMatchesFlow listener")
-            listener.remove() 
-        }
-    }.flowOn(Dispatchers.IO)
+        awaitClose { listener.remove() }
+    }.stateIn(scope, SharingStarted.Lazily, allMatches)
+
+    fun getMatchesFlow(): Flow<List<Match>> = matchesFlow
 }

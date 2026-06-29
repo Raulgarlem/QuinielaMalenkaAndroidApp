@@ -2,6 +2,7 @@ package com.beetik.quinielamalenkamexico2026.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
@@ -17,7 +18,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import android.content.res.Configuration
@@ -37,6 +37,7 @@ import com.google.gson.reflect.TypeToken
 import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.GroupStandingsView
 import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.MatchesListView
 import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.getGroupWinner
+import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.KnockoutBracketView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.beetik.quinielamalenkamexico2026.ui.screens.ranking.RankingViewModel
 import kotlinx.coroutines.launch
@@ -48,7 +49,6 @@ private fun String.normalize(): String {
     return normalized.replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "").lowercase()
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
     val context = LocalContext.current
@@ -58,7 +58,6 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
     val database = remember { QuinielaDatabase.getDatabase(context) }
     val gson = remember { Gson() }
     
-    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     var selectedView by rememberSaveable { mutableStateOf("Partidos") }
     var isSimulationMode by rememberSaveable { mutableStateOf(false) }
 
@@ -72,12 +71,7 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
     }
     
     // Timezone handling
-    val mexicoCityZone = "America/Mexico_City"
-    val sdfCDMX = remember { 
-        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).apply {
-            timeZone = TimeZone.getTimeZone(mexicoCityZone)
-        }
-    }
+    val sdfCDMX = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     val sdfLocalTime = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val sdfLocalDisplayDate = remember { SimpleDateFormat("d 'de' MMMM", Locale.getDefault()) }
     
@@ -89,7 +83,6 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
     val hasLiveMatches = remember(allMatches) { allMatches.any { it.started && it.isActive } }
     val secondaryTab = if (hasLiveMatches) "En Vivo" else "Próximos"
     
-    // Categorías diferenciadas para cada vista
     val matchGroups = remember(allMatches, secondaryTab) { 
         listOf("Todos", secondaryTab) + allMatches.map { it.group }.distinct().sorted() 
     }
@@ -126,126 +119,166 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
         }
     }
 
-    val filteredMatches = remember(selectedMatchGroupIndex, allMatches, hasLiveMatches, searchQuery) {
-        val baseFiltered = when (selectedMatchGroupIndex) {
-            0 -> allMatches.sortedWith(compareBy({ it.date }, { it.time }))
-            1 -> {
-                if (hasLiveMatches) {
-                    allMatches.filter { it.started && it.isActive }
-                } else {
-                    val sorted = allMatches.sortedWith(compareBy({ it.date }, { it.time }))
-                    val firstUpcomingIndex = sorted.indexOfFirst { !it.finished }
-                    if (firstUpcomingIndex != -1) {
-                        sorted.subList(firstUpcomingIndex, (firstUpcomingIndex + (if (sorted.size - firstUpcomingIndex < 5) sorted.size - firstUpcomingIndex else 5)).coerceAtMost(sorted.size))
+    val filteredMatches by remember(selectedMatchGroupIndex, rankingViewModel.rawMatches, hasLiveMatches, searchQuery) {
+        derivedStateOf {
+            val baseFiltered = when (selectedMatchGroupIndex) {
+                0 -> rankingViewModel.rawMatches.sortedWith(compareBy({ it.date }, { it.time }))
+                1 -> {
+                    if (hasLiveMatches) {
+                        rankingViewModel.rawMatches.filter { it.started && it.isActive }
                     } else {
-                        emptyList()
+                        val sorted = rankingViewModel.rawMatches.sortedWith(compareBy({ it.date }, { it.time }))
+                        val firstUpcomingIndex = sorted.indexOfFirst { !it.finished }
+                        if (firstUpcomingIndex != -1) {
+                            sorted.subList(firstUpcomingIndex, (firstUpcomingIndex + (if (sorted.size - firstUpcomingIndex < 5) sorted.size - firstUpcomingIndex else 5)).coerceAtMost(sorted.size))
+                        } else {
+                            emptyList()
+                        }
                     }
                 }
+                else -> {
+                    val groupName = matchGroups.getOrNull(selectedMatchGroupIndex) ?: "Todos"
+                    rankingViewModel.rawMatches.filter { it.group == groupName }
+                }
             }
-            else -> {
-                val groupName = matchGroups[selectedMatchGroupIndex]
-                allMatches.filter { it.group == groupName }
-            }
-        }
 
-        if (searchQuery.isBlank()) {
-            baseFiltered
-        } else {
-            val query = searchQuery.normalize()
-            allMatches.filter { 
-                it.homeTeam.normalize().contains(query) || it.awayTeam.normalize().contains(query)
-            }.sortedWith(compareBy({ it.date }, { it.time }))
+            if (searchQuery.isBlank()) {
+                baseFiltered
+            } else {
+                val query = searchQuery.normalize()
+                rankingViewModel.rawMatches.filter { 
+                    it.homeTeam.normalize().contains(query) || it.awayTeam.normalize().contains(query)
+                }.sortedWith(compareBy({ it.date }, { it.time }))
+            }
         }
     }
 
-    Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            Column(modifier = Modifier.background(MaterialTheme.colorScheme.background)) {
-                if (!isLandscape) {
-                    CenterAlignedTopAppBar(
-                        title = { 
-                            if (isSearchActive) {
-                                TextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                                    placeholder = { Text("Buscar equipo...", color = Color.Gray) },
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        focusedIndicatorColor = Color.Transparent,
-                                        unfocusedIndicatorColor = Color.Transparent,
-                                        cursorColor = Gold
-                                    ),
-                                    singleLine = true,
-                                    textStyle = LocalTextStyle.current.copy(color = Gold, fontWeight = FontWeight.Bold)
-                                )
-                            } else {
-                                Text("PARTIDOS", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            }
-                        },
-                        actions = {
-                            if (isSearchActive) {
-                                IconButton(onClick = { 
-                                    isSearchActive = false
-                                    searchQuery = ""
-                                }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Cerrar búsqueda", tint = Gold)
-                                }
-                            } else {
-                                IconButton(onClick = { isSearchActive = true }) {
-                                    Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Gold)
-                                }
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent, titleContentColor = Gold),
-                        scrollBehavior = scrollBehavior
-                    )
+    val convertedResults by remember(isSimulationMode, allMatches) {
+        derivedStateOf {
+            if (isSimulationMode) {
+                val results = mutableMapOf<String, Pair<Int, Int>>()
+                allMatches.forEach { match ->
+                    val simScore = rankingViewModel.resultsMap[match.id]
+                    if (simScore != null) {
+                        results[match.id] = simScore.home to simScore.away
+                    } else if (match.started || match.finished) {
+                        results[match.id] = (match.realHomeScore ?: 0) to (match.realAwayScore ?: 0)
+                    }
                 }
-                TabRow(
-                    selectedTabIndex = if (selectedView == "Partidos") 0 else 1,
-                    containerColor = Color.Transparent,
-                    contentColor = Gold,
-                    modifier = Modifier.height(if (isLandscape) 40.dp else 48.dp),
-                    indicator = { tabPositions ->
-                        TabRowDefaults.SecondaryIndicator(
-                            Modifier.tabIndicatorOffset(tabPositions[if (selectedView == "Partidos") 0 else 1]),
-                            color = Gold
-                        )
-                    },
-                    divider = {}
+                results
+            } else {
+                allMatches.filter { it.started || it.finished }
+                    .associate { it.id to ((it.realHomeScore ?: 0) to (it.realAwayScore ?: 0)) }
+            }
+        }
+    }
+
+    val showBracket by remember(selectedStandingsGroupIndex, rankingViewModel.isVisibleGroups, rankingViewModel.isVisibleFinal) {
+        derivedStateOf {
+            val isKnockoutTab = if (selectedStandingsGroupIndex == 0) false else !standingsGroups.getOrNull(selectedStandingsGroupIndex).orEmpty().startsWith("Grupo")
+            (!rankingViewModel.isVisibleGroups && rankingViewModel.isVisibleFinal) || isKnockoutTab
+        }
+    }
+
+    val standingsMatches by remember(selectedStandingsGroupIndex, allMatches) {
+        derivedStateOf {
+            if (selectedStandingsGroupIndex == 0) {
+                allMatches
+            } else {
+                val groupName = standingsGroups.getOrNull(selectedStandingsGroupIndex)
+                allMatches.filter { it.group == groupName }
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        // TOP BAR
+        if (!isLandscape) {
+            Surface(
+                color = Color.Transparent,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Tab(
-                        selected = selectedView == "Partidos",
-                        onClick = { selectedView = "Partidos" },
-                        text = { Text("Partidos", fontWeight = FontWeight.Bold, fontSize = if (isLandscape) 12.sp else 14.sp) }
-                    )
-                    Tab(
-                        selected = selectedView == "Posiciones",
-                        onClick = { selectedView = "Posiciones" },
-                        text = { Text("Posiciones", fontWeight = FontWeight.Bold, fontSize = if (isLandscape) 12.sp else 14.sp) }
-                    )
+                    if (isSearchActive) {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                            placeholder = { Text("Buscar equipo...", color = Color.Gray, fontSize = 14.sp) },
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                cursorColor = Gold
+                            ),
+                            singleLine = true,
+                            textStyle = LocalTextStyle.current.copy(color = Gold, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        )
+                        IconButton(onClick = { 
+                            isSearchActive = false
+                            searchQuery = ""
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Gold, modifier = Modifier.size(24.dp))
+                        }
+                    } else {
+                        Text(
+                            "PARTIDOS", 
+                            fontWeight = FontWeight.ExtraBold, 
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Gold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Gold, modifier = Modifier.size(28.dp))
+                        }
+                    }
                 }
             }
-        },
-        containerColor = MaterialTheme.colorScheme.background
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
+        }
+        
+        TabRow(
+            selectedTabIndex = if (selectedView == "Partidos") 0 else 1,
+            containerColor = Color.Transparent,
+            contentColor = Gold,
+            modifier = Modifier.height(36.dp),
+            indicator = { tabPositions ->
+                TabRowDefaults.SecondaryIndicator(
+                    Modifier.tabIndicatorOffset(tabPositions[if (selectedView == "Partidos") 0 else 1]),
+                    color = Gold,
+                    height = 2.dp
+                )
+            },
+            divider = {}
         ) {
-            QuinielaSelector(
-                selectedQuiniela = selectedQuiniela,
-                savedQuinielas = savedQuinielas,
-                isLandscape = isLandscape,
-                onQuinielaSelected = { 
-                    selectedQuiniela = it
-                    selectedQuinielaId = it.id
-                }
+            Tab(
+                selected = selectedView == "Partidos",
+                onClick = { selectedView = "Partidos" },
+                text = { Text("Partidos", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
             )
+            Tab(
+                selected = selectedView == "Posiciones",
+                onClick = { selectedView = "Posiciones" },
+                text = { Text("Posiciones", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+            )
+        }
 
+        // CONTENT
+        QuinielaSelector(
+            selectedQuiniela = selectedQuiniela,
+            savedQuinielas = savedQuinielas,
+            isLandscape = isLandscape,
+            onQuinielaSelected = { 
+                selectedQuiniela = it
+                selectedQuinielaId = it.id
+            }
+        )
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (selectedView == "Partidos") {
                 MatchesListView(
                     filteredMatches = filteredMatches,
@@ -300,133 +333,108 @@ fun PartidosScreen(rankingViewModel: RankingViewModel = viewModel()) {
                     }
                 )
             } else {
-                val convertedResults = remember(isSimulationMode, rankingViewModel.resultsMap.size, allMatches) {
-                    if (isSimulationMode) {
-                        val results = mutableMapOf<String, Pair<Int, Int>>()
-                        
-                        allMatches.forEach { match ->
-                            val simScore = rankingViewModel.resultsMap[match.id]
-                            if (simScore != null) {
-                                // 1. Prioridad: Simulación manual (del RankingView)
-                                results[match.id] = simScore.home to simScore.away
-                            } else if (match.started || match.finished) {
-                                // 2. Si no hay simulación, pero el partido ya empezó/terminó, usar real
-                                results[match.id] = (match.realHomeScore ?: 0) to (match.realAwayScore ?: 0)
-                            }
-                        }
-                        results
-                    } else {
-                        // Modo Real: Solo partidos que han empezado (Vivo o Finalizado)
-                        allMatches.filter { it.started || it.finished }
-                            .associate { it.id to ((it.realHomeScore ?: 0) to (it.realAwayScore ?: 0)) }
-                    }
-                }
-
-                // Sticky Header for Posiciones
-                Column {
-                    // Simulation Toggle - Ahora FUERA del scroll de GroupStandingsView
-                    Surface(
-                        color = Gold.copy(alpha = 0.05f),
-                        shape = MaterialTheme.shapes.small,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                if (showBracket) {
+                    val knockoutMatches = remember(allMatches) { allMatches.filter { !it.group.startsWith("Grupo") } }
+                    KnockoutBracketView(
+                        allMatches = knockoutMatches, 
+                        resultsMap = convertedResults,
+                        matchResults = matchResults,
+                        headerContent = null
+                    )
+                } else {
+                    GroupStandingsView(
+                        allMatches = standingsMatches,
+                        resultsMap = convertedResults,
+                        userGroupWinners = userGroupWinners,
+                        headerContent = {
                             Column {
-                                Text(
-                                    text = if (isSimulationMode) "MODO SIMULACIÓN" else "MODO REAL",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (isSimulationMode) Gold else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                                Text(
-                                    text = if (isSimulationMode) "Incluye tus pronósticos para partidos futuros" else "Solo resultados oficiales",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                            }
-                            Switch(
-                                checked = isSimulationMode,
-                                onCheckedChange = { isSimulationMode = it },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Gold,
-                                    checkedTrackColor = Gold.copy(alpha = 0.3f),
-                                    uncheckedThumbColor = Color.Gray,
-                                    uncheckedTrackColor = Color.Gray.copy(alpha = 0.2f)
-                                ),
-                                modifier = Modifier.scale(0.8f)
-                            )
-                        }
-                    }
-
-                    ScrollableTabRow(
-                        selectedTabIndex = selectedStandingsGroupIndex,
-                        containerColor = Color.Transparent,
-                        contentColor = Gold,
-                        edgePadding = 16.dp,
-                        modifier = Modifier.height(if (isLandscape) 36.dp else 48.dp),
-                        divider = {},
-                        indicator = { tabPositions ->
-                            if (selectedStandingsGroupIndex < tabPositions.size) {
-                                TabRowDefaults.SecondaryIndicator(
-                                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedStandingsGroupIndex]),
-                                    color = Gold
-                                )
-                            }
-                        }
-                    ) {
-                        standingsGroups.forEachIndexed { index, group ->
-                            Tab(
-                                selected = selectedStandingsGroupIndex == index,
-                                onClick = { selectedStandingsGroupIndex = index },
-                                text = { 
-                                    Text(
-                                        group, 
-                                        modifier = Modifier.padding(vertical = if (isLandscape) 0.dp else 4.dp),
-                                        style = if (selectedStandingsGroupIndex == index) 
-                                            MaterialTheme.typography.bodyMedium.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = if (isLandscape) 11.sp else 14.sp
+                                // Simulation Toggle
+                                Surface(
+                                    color = Gold.copy(alpha = 0.05f),
+                                    shape = MaterialTheme.shapes.small,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = if (isSimulationMode) "MODO SIMULACIÓN" else "MODO REAL",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = if (isSimulationMode) Gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontWeight = FontWeight.ExtraBold
                                             )
-                                        else 
-                                            MaterialTheme.typography.bodySmall.copy(
-                                                fontSize = if (isLandscape) 11.sp else 12.sp
+                                            Text(
+                                                text = if (isSimulationMode) "Incluye tus pronósticos para partidos futuros" else "Solo resultados oficiales",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                                             )
-                                    ) 
-                                },
-                                selectedContentColor = Gold,
-                                unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                                        }
+                                        Switch(
+                                            checked = isSimulationMode,
+                                            onCheckedChange = { isSimulationMode = it },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = Gold,
+                                                checkedTrackColor = Gold.copy(alpha = 0.3f),
+                                                uncheckedThumbColor = Color.Gray,
+                                                uncheckedTrackColor = Color.Gray.copy(alpha = 0.2f)
+                                            ),
+                                            modifier = Modifier.scale(0.8f)
+                                        )
+                                    }
+                                }
+
+                                if (rankingViewModel.isVisibleGroups) {
+                                    ScrollableTabRow(
+                                        selectedTabIndex = selectedStandingsGroupIndex,
+                                        containerColor = Color.Transparent,
+                                        contentColor = Gold,
+                                        edgePadding = 16.dp,
+                                        modifier = Modifier.height(if (isLandscape) 36.dp else 48.dp),
+                                        divider = {},
+                                        indicator = { tabPositions ->
+                                            if (selectedStandingsGroupIndex < tabPositions.size) {
+                                                TabRowDefaults.SecondaryIndicator(
+                                                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedStandingsGroupIndex]),
+                                                    color = Gold
+                                                )
+                                            }
+                                        }
+                                    ) {
+                                        standingsGroups.forEachIndexed { index, group ->
+                                            Tab(
+                                                selected = selectedStandingsGroupIndex == index,
+                                                onClick = { selectedStandingsGroupIndex = index },
+                                                text = { 
+                                                    Text(
+                                                        group, 
+                                                        modifier = Modifier.padding(vertical = if (isLandscape) 0.dp else 4.dp),
+                                                        style = if (selectedStandingsGroupIndex == index) 
+                                                            MaterialTheme.typography.bodyMedium.copy(
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = if (isLandscape) 11.sp else 14.sp
+                                                            )
+                                                        else 
+                                                            MaterialTheme.typography.bodySmall.copy(
+                                                                fontSize = if (isLandscape) 11.sp else 12.sp
+                                                            )
+                                                    ) 
+                                                },
+                                                selectedContentColor = Gold,
+                                                unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                                if (!isLandscape) Spacer(modifier = Modifier.height(8.dp))
+                            }
                         }
-                    }
-                    if (!isLandscape) Spacer(modifier = Modifier.height(8.dp))
+                    )
                 }
-
-                val standingsMatches = remember(searchQuery, selectedStandingsGroupIndex, allMatches) {
-                    if (searchQuery.isNotBlank()) {
-                        val query = searchQuery.normalize()
-                        val relevantGroups = allMatches.filter { 
-                            it.homeTeam.normalize().contains(query) || it.awayTeam.normalize().contains(query)
-                        }.map { it.group }.toSet()
-                        allMatches.filter { it.group in relevantGroups }
-                    } else if (selectedStandingsGroupIndex == 0) {
-                        allMatches
-                    } else {
-                        allMatches.filter { it.group == standingsGroups[selectedStandingsGroupIndex] }
-                    }
-                }
-
-                GroupStandingsView(
-                    allMatches = standingsMatches,
-                    resultsMap = convertedResults,
-                    userGroupWinners = userGroupWinners,
-                    headerContent = null // Ya no pasamos el header aquí para que no haga scroll
-                )
             }
         }
     }
@@ -444,17 +452,18 @@ fun QuinielaSelector(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = if (isLandscape) 2.dp else 8.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
     ) {
         OutlinedCard(
             onClick = { showDropdown = true },
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+            modifier = Modifier.fillMaxWidth().height(32.dp),
+            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(4.dp)
         ) {
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(if (isLandscape) 6.dp else 8.dp),
+                    .fillMaxSize()
+                    .padding(horizontal = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -463,21 +472,23 @@ fun QuinielaSelector(
                         Icons.Default.FilterList, 
                         contentDescription = null, 
                         tint = Gold, 
-                        modifier = Modifier.size(if (isLandscape) 14.dp else 16.dp)
+                        modifier = Modifier.size(12.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = selectedQuiniela?.let { "${it.quinielaName} - ${it.propietarioName}" } ?: "Seleccionar Quiniela",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = if (isLandscape) 11.sp else 12.sp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         fontWeight = FontWeight.Bold,
-                        color = Gold
+                        color = Gold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Icon(
                     Icons.Default.ArrowDropDown, 
                     contentDescription = null, 
                     tint = Gold, 
-                    modifier = Modifier.size(if (isLandscape) 20.dp else 24.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
