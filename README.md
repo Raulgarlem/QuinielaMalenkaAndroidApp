@@ -14,6 +14,12 @@
 
 > This repository contains the **native Android client**. Quiniela Malenka also has an independent web client; both applications share tournament and participant data through Firebase and the automation backend.
 
+<p align="center">
+  <strong>Native Android client (this repository)</strong>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/Beetik/Quiniela-Malenka">Web client</a>
+</p>
+
 ## Demo
 
 <p align="center">
